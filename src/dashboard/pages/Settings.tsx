@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { navigate } from '../App';
 import { Favicon } from '../components/Icons';
+import { buildAiPrompt } from '../lib/aiPrompt';
 import { api, type Site } from '../lib/api';
 
 function Section({ title, desc, children }: { title: string; desc?: ReactNode; children: ReactNode }) {
@@ -72,6 +73,8 @@ export function Settings({ siteId }: { siteId: string }) {
           <Favicon domain={site.domain} size={22} /> {site.name}
         </div>
       </div>
+
+      <AiSetup site={site} origin={origin} />
 
       <Section title="1. Install the tracking script" desc={<>Paste this in the <code>&lt;head&gt;</code> of every page on {site.domain} (and its subdomains).</>}>
         <Code>{snippet}</Code>
@@ -254,6 +257,43 @@ curl -X POST ${origin}/api/v1/goals \\
         </button>
       </Section>
     </div>
+  );
+}
+
+/** One-click prompt for the owner's coding AI, so it can install everything in their codebase. */
+function AiSetup({ site, origin }: { site: Site; origin: string }) {
+  const [copied, setCopied] = useState(false);
+  const [open, setOpen] = useState(false);
+  const prompt = buildAiPrompt(site, origin);
+  return (
+    <section className="card border-violet-200 bg-gradient-to-br from-violet-50 to-white p-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold">✨ Set up with AI</h2>
+          <p className="mt-1 max-w-lg text-sm text-stone-600">
+            Copy this prompt into Claude Code, Cursor or any coding AI opened in your project. It installs the script, connects Dodo Payments
+            attribution, identifies users and adds button goals, using this site's real values. It asks you only what it can't find in your code.
+          </p>
+        </div>
+        <button
+          className="btn-dark shrink-0"
+          onClick={() => {
+            navigator.clipboard.writeText(prompt);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+          }}
+        >
+          {copied ? '✓ Copied' : 'Copy AI prompt'}
+        </button>
+      </div>
+      <button className="mt-3 text-sm font-medium text-violet-700 hover:underline" onClick={() => setOpen((o) => !o)}>
+        {open ? 'Hide prompt' : 'Preview prompt'}
+      </button>
+      {open && <pre className="code mt-3 max-h-96 whitespace-pre-wrap">{prompt}</pre>}
+      <p className="mt-3 text-xs text-stone-500">
+        The AI handles the code. You still connect the Dodo webhook yourself (step 3 below), because that's done in Dodo's dashboard.
+      </p>
+    </section>
   );
 }
 
