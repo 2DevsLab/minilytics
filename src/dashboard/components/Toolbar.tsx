@@ -130,8 +130,8 @@ export function Toolbar({
         )}
       </Dropdown>
 
-      <div className="flex h-11 items-stretch overflow-hidden rounded-xl border border-stone-200 bg-white shadow-card">
-        <button className="px-3 text-xl text-stone-500 hover:bg-stone-50" onClick={() => shift(-1)} aria-label="Previous period">
+      <div className="flex h-11 items-stretch rounded-xl border border-stone-200 bg-white shadow-card">
+        <button className="rounded-l-xl px-3 text-xl text-stone-500 hover:bg-stone-50" onClick={() => shift(-1)} aria-label="Previous period">
           ‹
         </button>
         <Dropdown
@@ -174,7 +174,7 @@ export function Toolbar({
           )}
         </Dropdown>
         <button
-          className="px-3 text-xl text-stone-500 hover:bg-stone-50 disabled:opacity-30"
+          className="rounded-r-xl px-3 text-xl text-stone-500 hover:bg-stone-50 disabled:opacity-30"
           onClick={() => shift(1)}
           disabled={!canForward}
           aria-label="Next period"
