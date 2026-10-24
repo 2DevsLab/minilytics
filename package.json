@@ -2,6 +2,12 @@
   "name": "minilytics",
   "version": "0.1.0",
   "private": true,
+  "description": "Revenue-first, self-hosted web analytics on Cloudflare Workers + D1. Free to host.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/surendrapandar/minilytics.git"
+  },
   "type": "module",
   "scripts": {
     "dev": "concurrently -k -n api,web \"wrangler dev --port 8787\" \"vite\"",
