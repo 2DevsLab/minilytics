@@ -10,6 +10,8 @@ import { breakdown, customers, funnel, makeCtx, overview, visitorProfile, visito
 const app = new Hono<AppEnv>();
 const AUTH_COOKIE = 'ml_auth';
 const AUTH_DAYS = 30;
+const MAX_FAILURES = 10;
+const LOCKOUT_MS = 15 * 60_000;
 
 // ---------- public: tracking, webhooks, server-side API
 
@@ -31,11 +33,25 @@ app.post('/api/auth/login', async (c) => {
   if (!c.env.ADMIN_PASSWORD || !c.env.SESSION_SECRET) {
     return c.json({ error: 'Set ADMIN_PASSWORD and SESSION_SECRET (see README).' }, 500);
   }
+  // Lock an IP out after too many wrong passwords, so a public dashboard can't be brute-forced.
+  const ip = c.req.header('cf-connecting-ip') ?? 'unknown';
+  const now = Date.now();
+  const recent = await c.env.DB.prepare('SELECT COUNT(*) AS n FROM login_failures WHERE ip = ? AND ts > ?')
+    .bind(ip, now - LOCKOUT_MS)
+    .first<{ n: number }>();
+  if ((recent?.n ?? 0) >= MAX_FAILURES) {
+    return c.json({ error: 'Too many wrong attempts. Try again in 15 minutes.' }, 429);
+  }
   const { password } = await c.req.json<{ password?: string }>().catch(() => ({ password: undefined }));
   if (!password || !passwordsMatch(password, c.env.ADMIN_PASSWORD)) {
+    await c.env.DB.batch([
+      c.env.DB.prepare('INSERT INTO login_failures (ip, ts) VALUES (?, ?)').bind(ip, now),
+      c.env.DB.prepare('DELETE FROM login_failures WHERE ts < ?').bind(now - LOCKOUT_MS),
+    ]);
     await new Promise((r) => setTimeout(r, 500));
     return c.json({ error: 'Wrong password' }, 401);
   }
+  await c.env.DB.prepare('DELETE FROM login_failures WHERE ip = ?').bind(ip).run();
   const expires = Date.now() + AUTH_DAYS * 86_400_000;
   setCookie(c, AUTH_COOKIE, await signToken(c.env.SESSION_SECRET, `admin.${expires}`), {
     httpOnly: true,

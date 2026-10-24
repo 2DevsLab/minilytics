@@ -20,27 +20,63 @@ Cloudflare's free plan.
 
 ## Deploy for free (about 10 minutes)
 
-You need a free Cloudflare account and Node 20+.
+Every person deploys **their own copy** on their own free Cloudflare account. Your data stays on your account, and you
+get your own dashboard with its own password.
+
+You need a free [Cloudflare account](https://dash.cloudflare.com/sign-up), [Node.js 20+](https://nodejs.org) and Git.
+Run these commands in a terminal on your computer. You only do this once; afterwards the app runs on Cloudflare.
+
+**1. Download the code and log in to Cloudflare**
 
 ```bash
+git clone https://github.com/surendrapandar/minilytics.git
+cd minilytics
 npm install
-npx wrangler login
+npx wrangler login          # opens your browser; click "Allow"
+```
 
-# 1. Create the database, then paste the printed database_id into wrangler.jsonc
+**2. Create the database**
+
+```bash
 npx wrangler d1 create minilytics
+```
 
-# 2. Set your dashboard password and a random signing secret
-npx wrangler secret put ADMIN_PASSWORD
-npx wrangler secret put SESSION_SECRET      # any long random string, e.g. `openssl rand -hex 32`
+If Wrangler asks *"Would you like Wrangler to add it on your behalf?"*, answer **No**. Answer **No** to the optional
+"Cloudflare skills" questions too. Then copy the printed `database_id` and paste it into `wrangler.jsonc`, replacing
+`00000000-0000-0000-0000-000000000000`. There must be exactly **one** entry under `d1_databases`, with `"binding": "DB"`.
 
-# 3. Build, create the tables and deploy
+**3. Set your password and a signing secret**
+
+```bash
+npx wrangler secret put ADMIN_PASSWORD     # the password you'll log in with (use a strong one)
+npx wrangler secret put SESSION_SECRET     # any long random text, e.g. the output of: openssl rand -hex 32
+```
+
+Typing is hidden; that's normal. If asked *"There doesn't seem to be a Worker called minilytics… create it?"*, answer **Yes**.
+
+**4. Deploy**
+
+```bash
 npm run deploy
 ```
 
-Open the URL Wrangler prints (`https://minilytics.<you>.workers.dev`), log in, add a website and copy its script tag.
-You can attach a custom domain such as `analytics.yourdomain.com` in Cloudflare → Workers → Settings → Domains.
+This builds the dashboard, creates the database tables and deploys. It prints your link, e.g.
+`https://minilytics.<you>.workers.dev`. Open it, log in, add a website and copy its script tag. Each site's Settings
+page also has a **Copy AI prompt** button that lets Claude Code / Cursor do the install in your codebase for you.
 
-To update later: `git pull && npm run deploy`.
+If you see `fetch failed`, it's a network hiccup (VPN, proxy, Wi-Fi). Run `npm run deploy` again.
+
+You can attach a custom domain such as `analytics.yourdomain.com` in Cloudflare → Workers & Pages → minilytics →
+Settings → Domains & Routes.
+
+**Updating later**
+
+```bash
+git stash          # keeps your database_id edit in wrangler.jsonc safe
+git pull
+git stash pop
+npm run deploy
+```
 
 ### What the free plan covers
 
