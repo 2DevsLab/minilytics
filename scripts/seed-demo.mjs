@@ -21,7 +21,7 @@ const SOURCES = [
   [{ source: 'X', channel: 'Organic Social', referrer: 't.co', domain: 't.co' }, 28],
   [{ source: 'Direct/None', channel: 'Direct', referrer: null, domain: null }, 22],
   [{ source: 'Google', channel: 'Organic Search', referrer: 'www.google.com', domain: 'google.com' }, 14],
-  [{ source: 'marclou.com', channel: 'Referral', referrer: 'marclou.com/projects', domain: 'marclou.com' }, 9],
+  [{ source: 'Indie Hackers', channel: 'Referral', referrer: 'www.indiehackers.com', domain: 'indiehackers.com' }, 9],
   [{ source: 'Reddit', channel: 'Organic Social', referrer: 'www.reddit.com/r/SaaS', domain: 'reddit.com' }, 6],
   [{ source: 'YouTube', channel: 'Organic Social', referrer: 'www.youtube.com', domain: 'youtube.com' }, 4],
   [{ source: 'ChatGPT', channel: 'AI', referrer: 'chatgpt.com', domain: 'chatgpt.com' }, 4],
@@ -76,14 +76,14 @@ for (let d = 34; d >= 0; d--) {
 
     const paid = wantsToBuy && rand() < 0.75;
     const name = paid ? pick(NAMES) : null;
-    out.push(`INSERT INTO visitors (site_id, id, first_seen, name, email) VALUES ('${siteId}', '${vid}', ${start - (paid && rand() < 0.5 ? Math.floor(rand() * 10 * DAY) : 0)}, ${q(name)}, ${q(name ? name.toLowerCase().replace(' ', '.') + '@gmail.com' : null)});`);
+    out.push(`INSERT INTO visitors (site_id, id, first_seen, name, email) VALUES ('${siteId}', '${vid}', ${start - (paid && rand() < 0.5 ? Math.floor(rand() * 10 * DAY) : 0)}, ${q(name)}, ${q(name ? name.toLowerCase().replace(' ', '.') + '@example.com' : null)});`);
     out.push(
       `INSERT INTO sessions (site_id, id, visitor_id, started_at, last_seen_at, duration, pageviews, goals, hostname, entry_page, exit_page, referrer, referrer_domain, source, channel, utm_source, utm_medium, utm_campaign, utm_term, utm_content, ref, country, region, city, browser, os, device) VALUES ('${siteId}', '${sid}', '${vid}', ${start}, ${last}, ${duration}, ${pages.length}, ${goals}, 'shipkit.dev', ${q(entry)}, ${q(pages.at(-1))}, ${q(s.referrer)}, ${q(s.domain)}, ${q(s.source)}, ${q(s.channel)}, ${q(camp ? s.source.toLowerCase() : null)}, ${q(camp ? 'social' : null)}, ${q(camp)}, NULL, NULL, NULL, '${country}', ${q(region)}, ${q(city)}, '${browser}', '${os}', '${device}');`,
     );
     for (const [ts, type, n, p] of events) out.push(`INSERT INTO events (site_id, session_id, visitor_id, ts, type, name, path) VALUES ('${siteId}', '${sid}', '${vid}', ${ts}, '${type}', ${q(n)}, ${q(p)});`);
     if (paid) {
       const amount = pick([4900, 9900, 9900, 16900, 29900]);
-      out.push(`INSERT INTO payments (id, site_id, provider, ts, amount, kind, currency, visitor_id, session_id, customer_id, email, name) VALUES ('pay_demo_${++payN}', '${siteId}', 'dodo', ${t + 60_000 > now ? now - 1000 : t + 60_000}, ${amount}, 'payment', 'USD', '${vid}', '${sid}', 'cus_${payN}', ${q(name.toLowerCase().replace(' ', '.') + '@gmail.com')}, ${q(name)});`);
+      out.push(`INSERT INTO payments (id, site_id, provider, ts, amount, kind, currency, visitor_id, session_id, customer_id, email, name) VALUES ('pay_demo_${++payN}', '${siteId}', 'dodo', ${t + 60_000 > now ? now - 1000 : t + 60_000}, ${amount}, 'payment', 'USD', '${vid}', '${sid}', 'cus_${payN}', ${q(name.toLowerCase().replace(' ', '.') + '@example.com')}, ${q(name)});`);
     }
   }
 }
