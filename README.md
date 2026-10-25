@@ -6,6 +6,32 @@ Cloudflare's free plan.
 
 ![Dashboard](docs/dashboard.png)
 
+## Sponsors
+
+<table>
+  <tr>
+    <td align="center" width="33%">
+      <a href="https://diskmate.app/?ref=minilytics-github"><img src="docs/sponsors/diskmate.svg" width="64" height="64" alt="DiskMate"></a><br>
+      <a href="https://diskmate.app/?ref=minilytics-github"><b>DiskMate</b></a><br>
+      <sub>Disk space analyzer &amp; cleaner for Mac</sub>
+    </td>
+    <td align="center" width="33%">
+      <a href="https://pastebuddy.app/?ref=minilytics-github"><img src="docs/sponsors/pastebuddy.svg" width="64" height="64" alt="PasteBuddy"></a><br>
+      <a href="https://pastebuddy.app/?ref=minilytics-github"><b>PasteBuddy</b></a><br>
+      <sub>Clipboard history for Mac: never lose what you copy</sub>
+    </td>
+    <td align="center" width="33%">
+      <a href="https://checkout.dodopayments.com/buy/pdt_0NqWPM98xzStsrTUMLyxE?quantity=1"><b>Your logo here</b></a><br>
+      <sub>Reach indie hackers and developers who self-host their analytics</sub><br><br>
+      <a href="https://checkout.dodopayments.com/buy/pdt_0NqWPM98xzStsrTUMLyxE?quantity=1">Become a sponsor →</a>
+    </td>
+  </tr>
+</table>
+
+<p align="center">
+  <a href="https://checkout.dodopayments.com/buy/pdt_0NqWPM98xzStsrTUMLyxE?quantity=1"><img src="https://img.shields.io/badge/Become%20a%20sponsor-%2419%2Fmonth%20early%20price-e07b5f?style=for-the-badge" alt="Become a sponsor: $19/month early price"></a>
+</p>
+
 ## What it tracks
 
 - **Visitors, revenue, conversion rate, revenue per visitor, bounce rate, session time, online now**, each with a % change against the previous period
