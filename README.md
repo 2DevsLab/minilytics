@@ -176,7 +176,7 @@ npm run smoke                         # end-to-end test against the running dev 
 
 ## How it's built
 
-- `public/js/script.js`: the tracker, 7 KB (about 3 KB gzipped). It handles cookies, pageviews, engaged time, goals, outbound links and Dodo link tagging
+- `public/js/script.js`: the tracker, 9 KB (about 3.5 KB gzipped). It handles cookies, pageviews, engaged time, goals, outbound links and Dodo link tagging
 - `src/worker`: a Hono app on Cloudflare Workers that handles event ingestion, the Dodo webhook, the payments and goals API, and stats queries on D1 (SQLite)
 - `src/dashboard`: the React dashboard (Vite, Tailwind, Recharts), served as static files by the same Worker
 - `migrations/`: the database schema
