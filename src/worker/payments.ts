@@ -79,21 +79,11 @@ async function attribute(db: D1Database, site: Site, p: PaymentInput) {
       .first<{ id: string }>();
     if (v) [visitorId, matchedBy] = [v.id, 'email'];
   }
+  let reason: string | null = null;
   if (!visitorId && p.kind === 'payment' && !renewal) {
-    // Only trusted when there is exactly one candidate who isn't already linked to another payment.
-    const candidates = await db
-      .prepare(
-        `SELECT DISTINCT e.visitor_id FROM events e
-         WHERE e.site_id = ? AND e.ts BETWEEN ? AND ?
-           AND ((e.type = 'outbound' AND e.name LIKE '%dodopayments.com%')
-                OR (e.type = 'goal' AND (e.name LIKE '%checkout%' OR e.name LIKE '%buy%' OR e.name LIKE '%purchase%')))
-           AND NOT EXISTS (SELECT 1 FROM payments o WHERE o.site_id = e.site_id AND o.visitor_id = e.visitor_id
-                           AND o.kind = 'payment' AND o.id != ? AND o.ts BETWEEN ? AND ?)
-         LIMIT 2`,
-      )
-      .bind(site.id, p.ts - TIMING_WINDOW_MS, p.ts + 5 * 60_000, p.id, p.ts - TIMING_WINDOW_MS, p.ts + TIMING_WINDOW_MS)
-      .all<{ visitor_id: string }>();
-    if (candidates.results.length === 1) [visitorId, matchedBy] = [candidates.results[0].visitor_id, 'timing'];
+    const t = await matchByTiming(db, site, p);
+    if (t.visitorId) [visitorId, matchedBy] = [t.visitorId, 'timing'];
+    reason = t.reason;
   }
 
   let sessionId: string | null = null;
@@ -101,10 +91,59 @@ async function attribute(db: D1Database, site: Site, p: PaymentInput) {
     const s = await db.prepare(creditedSessionSql()).bind(site.id, visitorId, p.ts + 60_000).first<{ id: string }>();
     sessionId = s?.id ?? p.sessionId ?? null;
   }
-  return { visitorId, sessionId, renewal, matchedBy };
+  return { visitorId, sessionId, renewal, matchedBy, reason };
 }
 
 const TIMING_WINDOW_MS = 3 * 3_600_000;
+const MIN = 60_000;
+
+/**
+ * Last resort when nothing identifies the buyer: look at who clicked a Dodo checkout link (or a checkout goal)
+ * in the 3 hours before the payment. The strongest sign is coming back to the site right after paying
+ * (Dodo redirects buyers to your return page); people who clicked Buy and gave up don't.
+ * Only ever picks a visitor when the evidence points to exactly one person.
+ */
+async function matchByTiming(db: D1Database, site: Site, p: PaymentInput): Promise<{ visitorId: string | null; reason: string }> {
+  const clicks = await db
+    .prepare(
+      `SELECT e.visitor_id, MAX(e.ts) AS last_click FROM events e
+       WHERE e.site_id = ? AND e.ts BETWEEN ? AND ?
+         AND ((e.type = 'outbound' AND e.name LIKE '%dodopayments.com%')
+              OR (e.type = 'goal' AND (e.name LIKE '%checkout%' OR e.name LIKE '%buy%' OR e.name LIKE '%purchase%')))
+         AND NOT EXISTS (SELECT 1 FROM payments o WHERE o.site_id = e.site_id AND o.visitor_id = e.visitor_id
+                         AND o.kind = 'payment' AND o.id != ? AND o.ts BETWEEN ? AND ?)
+       GROUP BY e.visitor_id ORDER BY last_click DESC LIMIT 50`,
+    )
+    .bind(site.id, p.ts - TIMING_WINDOW_MS, p.ts + 2 * MIN, p.id, p.ts - TIMING_WINDOW_MS, p.ts + TIMING_WINDOW_MS)
+    .all<{ visitor_id: string; last_click: number }>();
+  const cands = clicks.results;
+  if (!cands.length) return { visitorId: null, reason: 'No one clicked a checkout link in the 3 hours before this payment (was the script installed yet?)' };
+  if (cands.length === 1) return { visitorId: cands[0].visitor_id, reason: 'Only checkout click before the payment' };
+
+  // Who came back to the site shortly after the payment, after having clicked checkout?
+  const placeholders = cands.map(() => '?').join(',');
+  const views = await db
+    .prepare(
+      `SELECT visitor_id, ts FROM events
+       WHERE site_id = ? AND type = 'pageview' AND ts BETWEEN ? AND ? AND visitor_id IN (${placeholders})
+       LIMIT 1000`,
+    )
+    .bind(site.id, p.ts - MIN, p.ts + 30 * MIN, ...cands.map((c) => c.visitor_id))
+    .all<{ visitor_id: string; ts: number }>();
+  const lastClick = new Map(cands.map((c) => [c.visitor_id, c.last_click]));
+  // A pageview after their last checkout click = they came back from the checkout.
+  const returned = [...new Set(views.results.filter((v) => v.ts > (lastClick.get(v.visitor_id) ?? Infinity)).map((v) => v.visitor_id))];
+  if (returned.length === 1) return { visitorId: returned[0], reason: 'Came back to the site right after paying' };
+
+  // Nobody (or several people) came back: fall back to a single clicker in the 30 minutes before paying.
+  const recent = cands.filter((c) => c.last_click >= p.ts - 30 * MIN && c.last_click <= p.ts + MIN);
+  if (recent.length === 1) return { visitorId: recent[0].visitor_id, reason: 'Only checkout click in the 30 minutes before the payment' };
+
+  return {
+    visitorId: null,
+    reason: `${cands.length} people clicked checkout before this payment${returned.length > 1 ? ` and ${returned.length} came back right after` : ''}; too close to call`,
+  };
+}
 
 export async function recordPayment(db: D1Database, site: Site, p: PaymentInput) {
   const { visitorId, sessionId, renewal, matchedBy } = await attribute(db, site, p);
@@ -152,6 +191,7 @@ export async function rematchPayments(db: D1Database, site: Site) {
     .bind(site.id)
     .all<{ id: string; ts: number; amount: number; currency: string; customer_id: string | null; email: string | null; name: string | null; provider: string; subscription_id: string | null }>();
   let matched = 0;
+  const details: { id: string; name: string | null; matched: boolean; reason: string | null }[] = [];
   for (const r of rows.results) {
     const a = await attribute(db, site, {
       id: r.id,
@@ -165,6 +205,7 @@ export async function rematchPayments(db: D1Database, site: Site) {
       name: r.name,
       subscriptionId: r.subscription_id,
     });
+    details.push({ id: r.id, name: r.name, matched: !!a.visitorId, reason: a.reason });
     if (!a.visitorId) continue;
     matched++;
     await db.batch([
@@ -177,7 +218,7 @@ export async function rematchPayments(db: D1Database, site: Site) {
         .bind(r.email, r.name, site.id, a.visitorId),
     ]);
   }
-  return { checked: rows.results.length, matched };
+  return { checked: rows.results.length, matched, details };
 }
 
 const str = (v: unknown) => (typeof v === 'string' && v ? v : null);

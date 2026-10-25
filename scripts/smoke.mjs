@@ -30,6 +30,9 @@ assert((await call('/api/sites')).status === 401, 'dashboard API needs login');
 assert((await call('/api/auth/login', { method: 'POST', body: JSON.stringify({ password: 'nope' }) })).status === 401, 'wrong password rejected');
 assert((await call('/api/auth/login', { method: 'POST', body: JSON.stringify({ password: PASSWORD }) })).status === 200, 'login');
 
+// Remove leftovers from an interrupted earlier run (payment ids would collide).
+for (const old of (await call('/api/sites')).body) if (old.domain === 'smoke-test.com') await call(`/api/sites/${old.id}`, { method: 'DELETE' });
+
 const site = (await call('/api/sites', { method: 'POST', body: JSON.stringify({ domain: 'https://www.smoke-test.com/', name: 'Smoke', timezone: 'Asia/Kolkata' }) })).body;
 assert(site.domain === 'smoke-test.com', 'domain is normalised');
 
@@ -144,9 +147,32 @@ await dodo({ ...pay, data: { ...pay.data, payment_id: 'pay_timing_1', metadata: 
 const c3 = (await call(`/api/sites/${site.id}/customers?period=today`)).body.find((c) => c.id === 'pay_timing_1');
 assert(c3.visitor_id === vid4 && c3.matched_by === 'timing' && c3.ref === 'medium-article', 'timing match credits the medium-article ref');
 
-// 4. Rematch button works and is harmless when nothing is left
+// 3b. Several people clicked Buy; only the buyer came back right after paying (the real-world case)
+const clicker = async (id) => {
+  const v = crypto.randomUUID(), s = crypto.randomUUID();
+  await event(site.id, { t: 'pageview', u: 'https://smoke-test.com/', r: id === 'buyer' ? 'https://chatgpt.com/' : '', vid: v, sid: s });
+  await event(site.id, { t: 'goal', u: 'https://smoke-test.com/', n: 'checkout_click', vid: v, sid: s });
+  await event(site.id, { t: 'outbound', u: 'https://smoke-test.com/', n: 'https://checkout.dodopayments.com/buy/pdt_x', vid: v, sid: s });
+  return { v, s };
+};
+await clicker('a'); await clicker('b');
+const buyer = await clicker('buyer');
+await event(site.id, { t: 'pageview', u: 'https://smoke-test.com/thanks', r: 'https://checkout.dodopayments.com/', vid: buyer.v, sid: buyer.s });
+await dodo({ ...pay, data: { ...pay.data, payment_id: 'pay_timing_2', created_at: new Date().toISOString(), metadata: {}, customer: { customer_id: 'cus_5', email: 'kb@example.com', name: 'KB' } } });
+const c4 = (await call(`/api/sites/${site.id}/customers?period=today`)).body.find((c) => c.id === 'pay_timing_2');
+assert(c4.visitor_id === buyer.v && c4.source === 'ChatGPT', 'with 3 checkout clickers, the one who came back after paying gets it');
+
+// 3c. Two clickers who both came back: too close to call, stays unlinked with a reason
+const d1 = await clicker('d'), d2 = await clicker('e');
+await event(site.id, { t: 'pageview', u: 'https://smoke-test.com/thanks', r: '', vid: d1.v, sid: d1.s });
+await event(site.id, { t: 'pageview', u: 'https://smoke-test.com/thanks', r: '', vid: d2.v, sid: d2.s });
+await dodo({ ...pay, data: { ...pay.data, payment_id: 'pay_ambiguous', created_at: new Date().toISOString(), metadata: {}, customer: { customer_id: 'cus_6', email: 'amb@example.com', name: 'Amb' } } });
+const c5 = (await call(`/api/sites/${site.id}/customers?period=today`)).body.find((c) => c.id === 'pay_ambiguous');
+assert(!c5.visitor_id, 'ambiguous timing is not guessed');
+
+// 4. Rematch button works and reports why
 const rm = (await call(`/api/sites/${site.id}/rematch`, { method: 'POST' })).body;
-assert(typeof rm.matched === 'number', `rematch endpoint (${rm.matched}/${rm.checked})`);
+assert(rm.checked === 1 && rm.matched === 0 && /too close to call/.test(rm.details[0].reason), `rematch explains: "${rm.details?.[0]?.reason}"`);
 
 for (const p of ['today', 'yesterday', '24h', '48h', '7d', '30d', '90d', '12m', 'all']) {
   const res = await call(`/api/sites/${site.id}/overview?period=${p}`);

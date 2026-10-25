@@ -265,6 +265,7 @@ function Journey({ search }: { search: string }) {
   const [all, setAll] = useState(false);
   const [version, setVersion] = useState(0);
   const [rematch, setRematch] = useState<string | null>(null);
+  const [reasons, setReasons] = useState<{ id: string; name: string | null; matched: boolean; reason: string | null }[]>([]);
   const { data } = useApi<any[]>(`/api/sites/${site.id}/customers?${qs(q)}`, reloadKey + version);
   if (!data) return <div className="h-40 animate-pulse" />;
   if (!data.length)
@@ -285,13 +286,26 @@ function Journey({ search }: { search: string }) {
             disabled={rematch === 'working'}
             onClick={async () => {
               setRematch('working');
-              const r = await api<{ matched: number; checked: number }>(`/api/sites/${site.id}/rematch`, { method: 'POST' });
+              const r = await api<{ matched: number; checked: number; details: typeof reasons }>(`/api/sites/${site.id}/rematch`, {
+                method: 'POST',
+              });
               setRematch(`Matched ${r.matched} of ${r.checked}`);
+              setReasons(r.details ?? []);
               setVersion((v) => v + 1);
             }}
           >
             {rematch === 'working' ? 'Matching…' : rematch ?? 'Try matching again'}
           </button>
+          {reasons.length > 0 && (
+            <ul className="w-full space-y-1 border-t border-amber-200 pt-2 text-xs">
+              {reasons.map((r) => (
+                <li key={r.id}>
+                  <b>{r.name ?? r.id}</b>: {r.matched ? '✓ matched' : '✗ not matched'}
+                  {r.reason ? ` · ${r.reason}` : ''}
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
       <table className="w-full min-w-[760px] text-[15px]">
