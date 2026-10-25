@@ -22,29 +22,52 @@ interface PaymentInput {
   customerId?: string | null;
   email?: string | null;
   name?: string | null;
+  subscriptionId?: string | null;
   renewal?: boolean;
 }
 
+export type MatchedBy = 'metadata' | 'return_page' | 'customer' | 'email' | 'timing';
+
+/** The visit that gets the credit: the visitor's last visit that came from somewhere (last non-direct touch). */
+export function creditedSessionSql() {
+  return `SELECT id FROM sessions WHERE site_id = ? AND visitor_id = ? AND started_at <= ?
+          ORDER BY (channel != 'Direct') DESC, started_at DESC LIMIT 1`;
+}
+
 /**
- * Work out which visitor paid and which visit gets the credit.
- * Credit goes to the visitor's last visit that came from somewhere (last non-direct touch),
- * so "saw a tweet, came back directly 17 days later and paid" is credited to the tweet.
+ * Work out which visitor paid and which visit gets the credit, trying the most reliable signal first:
+ *  1. metadata   ml_visitor_id passed to the checkout
+ *  2. return_page  the visitor landed on your return URL with ?payment_id=<this payment>
+ *  3. customer   the same customer paid before (renewals)
+ *  4. email      the email matches a visitor you identify()'d
+ *  5. timing     exactly one visitor clicked a Dodo checkout link (or a checkout goal) shortly before the payment
+ * Credit goes to the last non-direct visit, so "saw a tweet, came back directly 17 days later and paid"
+ * is credited to the tweet.
  */
 async function attribute(db: D1Database, site: Site, p: PaymentInput) {
   let visitorId = p.visitorId ?? null;
+  let matchedBy: MatchedBy | null = visitorId ? 'metadata' : null;
   let renewal = !!p.renewal;
+
+  if (!visitorId) {
+    const claim = await db
+      .prepare('SELECT visitor_id FROM payment_claims WHERE site_id = ? AND payment_id IN (?, ?) ORDER BY ts LIMIT 1')
+      .bind(site.id, p.id, p.subscriptionId ?? p.id)
+      .first<{ visitor_id: string }>();
+    if (claim) [visitorId, matchedBy] = [claim.visitor_id, 'return_page'];
+  }
 
   if (p.customerId || p.email) {
     const prev = await db
       .prepare(
-        `SELECT visitor_id FROM payments WHERE site_id = ? AND kind = 'payment' AND visitor_id IS NOT NULL
+        `SELECT visitor_id FROM payments WHERE site_id = ? AND kind = 'payment' AND visitor_id IS NOT NULL AND id != ?
            AND ((customer_id IS NOT NULL AND customer_id = ?) OR (email IS NOT NULL AND email = ?))
          ORDER BY ts ASC LIMIT 1`,
       )
-      .bind(site.id, p.customerId ?? null, p.email ?? null)
+      .bind(site.id, p.id, p.customerId ?? null, p.email ?? null)
       .first<{ visitor_id: string }>();
     if (prev) {
-      visitorId ??= prev.visitor_id;
+      if (!visitorId) [visitorId, matchedBy] = [prev.visitor_id, 'customer'];
       // Same customer paid before: a subscription renewal or repeat purchase.
       if (p.kind === 'payment') renewal = true;
     }
@@ -54,30 +77,42 @@ async function attribute(db: D1Database, site: Site, p: PaymentInput) {
       .prepare('SELECT id FROM visitors WHERE site_id = ? AND email = ? ORDER BY first_seen DESC LIMIT 1')
       .bind(site.id, p.email)
       .first<{ id: string }>();
-    visitorId = v?.id ?? null;
+    if (v) [visitorId, matchedBy] = [v.id, 'email'];
+  }
+  if (!visitorId && p.kind === 'payment' && !renewal) {
+    // Only trusted when there is exactly one candidate who isn't already linked to another payment.
+    const candidates = await db
+      .prepare(
+        `SELECT DISTINCT e.visitor_id FROM events e
+         WHERE e.site_id = ? AND e.ts BETWEEN ? AND ?
+           AND ((e.type = 'outbound' AND e.name LIKE '%dodopayments.com%')
+                OR (e.type = 'goal' AND (e.name LIKE '%checkout%' OR e.name LIKE '%buy%' OR e.name LIKE '%purchase%')))
+           AND NOT EXISTS (SELECT 1 FROM payments o WHERE o.site_id = e.site_id AND o.visitor_id = e.visitor_id
+                           AND o.kind = 'payment' AND o.id != ? AND o.ts BETWEEN ? AND ?)
+         LIMIT 2`,
+      )
+      .bind(site.id, p.ts - TIMING_WINDOW_MS, p.ts + 5 * 60_000, p.id, p.ts - TIMING_WINDOW_MS, p.ts + TIMING_WINDOW_MS)
+      .all<{ visitor_id: string }>();
+    if (candidates.results.length === 1) [visitorId, matchedBy] = [candidates.results[0].visitor_id, 'timing'];
   }
 
   let sessionId: string | null = null;
   if (visitorId) {
-    const s = await db
-      .prepare(
-        `SELECT id FROM sessions WHERE site_id = ? AND visitor_id = ? AND started_at <= ?
-         ORDER BY (channel != 'Direct') DESC, started_at DESC LIMIT 1`,
-      )
-      .bind(site.id, visitorId, p.ts + 60_000)
-      .first<{ id: string }>();
+    const s = await db.prepare(creditedSessionSql()).bind(site.id, visitorId, p.ts + 60_000).first<{ id: string }>();
     sessionId = s?.id ?? p.sessionId ?? null;
   }
-  return { visitorId, sessionId, renewal };
+  return { visitorId, sessionId, renewal, matchedBy };
 }
 
+const TIMING_WINDOW_MS = 3 * 3_600_000;
+
 export async function recordPayment(db: D1Database, site: Site, p: PaymentInput) {
-  const { visitorId, sessionId, renewal } = await attribute(db, site, p);
+  const { visitorId, sessionId, renewal, matchedBy } = await attribute(db, site, p);
   const stmts = [
     db
       .prepare(
-        `INSERT OR IGNORE INTO payments (id, site_id, provider, ts, amount, kind, currency, visitor_id, session_id, customer_id, email, name, renewal)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT OR IGNORE INTO payments (id, site_id, provider, ts, amount, kind, currency, visitor_id, session_id, customer_id, email, name, renewal, matched_by, subscription_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         p.id,
@@ -93,6 +128,8 @@ export async function recordPayment(db: D1Database, site: Site, p: PaymentInput)
         p.email ?? null,
         p.name ?? null,
         renewal ? 1 : 0,
+        matchedBy,
+        p.subscriptionId ?? null,
       ),
   ];
   // A payment tells us who an anonymous visitor really is.
@@ -106,6 +143,41 @@ export async function recordPayment(db: D1Database, site: Site, p: PaymentInput)
   }
   await db.batch(stmts);
   return { visitorId, sessionId };
+}
+
+/** Try again to link payments that have no visitor yet (e.g. ones recorded before a fallback existed). */
+export async function rematchPayments(db: D1Database, site: Site) {
+  const rows = await db
+    .prepare("SELECT * FROM payments WHERE site_id = ? AND kind = 'payment' AND visitor_id IS NULL ORDER BY ts LIMIT 500")
+    .bind(site.id)
+    .all<{ id: string; ts: number; amount: number; currency: string; customer_id: string | null; email: string | null; name: string | null; provider: string; subscription_id: string | null }>();
+  let matched = 0;
+  for (const r of rows.results) {
+    const a = await attribute(db, site, {
+      id: r.id,
+      provider: r.provider,
+      ts: r.ts,
+      amount: r.amount,
+      kind: 'payment',
+      currency: r.currency,
+      customerId: r.customer_id,
+      email: r.email,
+      name: r.name,
+      subscriptionId: r.subscription_id,
+    });
+    if (!a.visitorId) continue;
+    matched++;
+    await db.batch([
+      db
+        .prepare('UPDATE payments SET visitor_id = ?, session_id = ?, matched_by = ?, renewal = ? WHERE site_id = ? AND id = ?')
+        .bind(a.visitorId, a.sessionId, a.matchedBy, a.renewal ? 1 : 0, site.id, r.id),
+      db.prepare('INSERT OR IGNORE INTO visitors (site_id, id, first_seen) VALUES (?, ?, ?)').bind(site.id, a.visitorId, r.ts),
+      db
+        .prepare('UPDATE visitors SET email = COALESCE(email, ?), name = COALESCE(name, ?) WHERE site_id = ? AND id = ?')
+        .bind(r.email, r.name, site.id, a.visitorId),
+    ]);
+  }
+  return { checked: rows.results.length, matched };
 }
 
 const str = (v: unknown) => (typeof v === 'string' && v ? v : null);
@@ -159,6 +231,7 @@ export async function handleDodoWebhook(c: Context<AppEnv>) {
       customerId: str(customer.customer_id) ?? str(data.customer_id),
       email: str(customer.email)?.toLowerCase() ?? null,
       name: str(customer.name),
+      subscriptionId: str(data.subscription_id) ?? (Array.isArray(data.subscription_ids) ? str(data.subscription_ids[0]) : null),
     });
   } else if (event.type === 'refund.succeeded') {
     const original = await c.env.DB.prepare('SELECT * FROM payments WHERE id = ? AND site_id = ?')
