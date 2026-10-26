@@ -15,14 +15,17 @@
   var queued = (w.minilytics && w.minilytics.q) || [];
   function noop() {}
 
-  // Opt yourself out: visit any page with ?ml_ignore=true (undo with ?ml_ignore=false).
-  try {
-    var ig = new URLSearchParams(loc.search).get('ml_ignore');
-    if (ig === 'true') localStorage.setItem('ml_ignore', '1');
-    if (ig === 'false') localStorage.removeItem('ml_ignore');
-  } catch (e) {}
   var ignored = false;
-  try { ignored = localStorage.getItem('ml_ignore') === '1'; } catch (e) {}
+  if (useCookie) {
+    try {
+      var ig = new URLSearchParams(loc.search).get('ml_ignore');
+      if (ig === 'true') localStorage.setItem('ml_ignore', '1');
+      if (ig === 'false') localStorage.removeItem('ml_ignore');
+    } catch (e) {}
+    try { ignored = localStorage.getItem('ml_ignore') === '1'; } catch (e) {}
+  } else {
+    try { ignored = new URLSearchParams(loc.search).get('ml_ignore') === 'true'; } catch (e) {}
+  }
   var local = /^(localhost|127\.|0\.0\.0\.0|\[::1\]|.*\.local$)/.test(loc.hostname) || loc.protocol === 'file:';
   if (!siteId || ignored || nav.webdriver || (local && !allowLocal)) {
     w.minilytics = noop;

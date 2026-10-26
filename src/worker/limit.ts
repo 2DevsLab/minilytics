@@ -16,15 +16,21 @@ function defaultCache(): Cache | null {
   return store?.default ?? null
 }
 
-function markUrl(scope: string, id: string, windowStart: number): string {
-  return `https://minilytics-rl.invalid/${scope}/${encodeURIComponent(id)}/${windowStart}`
+async function cacheActor(scope: string, id: string): Promise<string> {
+  if (scope !== 'ip' || id === 'unknown') return encodeURIComponent(id)
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(id))
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+function markUrl(scope: string, actor: string, windowStart: number): string {
+  return `https://minilytics-rl.invalid/${scope}/${actor}/${windowStart}`
 }
 
 async function cachedUsed(scope: string, id: string, windowStart: number): Promise<number> {
   const cache = defaultCache()
   if (!cache) return 0
   try {
-    const hit = await cache.match(markUrl(scope, id, windowStart))
+    const hit = await cache.match(markUrl(scope, await cacheActor(scope, id), windowStart))
     if (!hit) return 0
     const body = (await hit.json()) as { used?: unknown }
     return typeof body.used === 'number' ? body.used : 0
@@ -38,7 +44,7 @@ async function publishUsed(scope: string, id: string, windowStart: number, used:
   if (!cache) return
   try {
     await cache.put(
-      markUrl(scope, id, windowStart),
+      markUrl(scope, await cacheActor(scope, id), windowStart),
       new Response(JSON.stringify({ used }), { headers: { 'cache-control': 'max-age=60' } }),
     )
   } catch {

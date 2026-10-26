@@ -118,7 +118,8 @@ export function accessConfigured(env: Env): boolean {
 const ACCESS_CERT_MS = 60 * 60 * 1000;
 const accessCerts = new Map<string, { at: number; keys: Map<string, CryptoKey> }>();
 
-function accessBase(team: string): string {
+function accessBase(team: string): string | null {
+  if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/.test(team)) return null;
   return `https://${team}.cloudflareaccess.com`;
 }
 
@@ -176,7 +177,7 @@ async function verifyAccess(env: Env, jwt: string): Promise<boolean> {
   }
   if (header.alg !== 'RS256' || typeof header.kid !== 'string') return false;
   const base = accessBase(env.CF_ACCESS_TEAM_DOMAIN);
-  if (claims.iss !== base) return false;
+  if (!base || claims.iss !== base) return false;
   const aud = claims.aud;
   const audOk = aud === env.CF_ACCESS_AUD || (Array.isArray(aud) && aud.includes(env.CF_ACCESS_AUD));
   if (!audOk || typeof claims.exp !== 'number' || claims.exp * 1000 <= Date.now()) return false;
