@@ -79,6 +79,14 @@ export interface Geo {
   country: string | null;
   region: string | null;
   city: string | null;
+  lat: number | null;
+  lon: number | null;
+}
+
+/** City-level coordinates, rounded to 2 decimals (~1 km) so no precise location is ever stored. */
+function coord(v: unknown, max: number): number | null {
+  const n = typeof v === 'number' ? v : parseFloat(String(v ?? ''));
+  return Number.isFinite(n) && Math.abs(n) <= max ? Math.round(n * 100) / 100 : null;
 }
 
 /**
@@ -95,10 +103,22 @@ function geoOf(c: Context<AppEnv>): Geo {
     }
   };
   if (h('x-vercel-ip-country')) {
-    return { country: h('x-vercel-ip-country'), region: h('x-vercel-ip-country-region'), city: h('x-vercel-ip-city') };
+    return {
+      country: h('x-vercel-ip-country'),
+      region: h('x-vercel-ip-country-region'),
+      city: h('x-vercel-ip-city'),
+      lat: coord(h('x-vercel-ip-latitude'), 90),
+      lon: coord(h('x-vercel-ip-longitude'), 180),
+    };
   }
   const cf = (c.req.raw as { cf?: IncomingRequestCfProperties }).cf;
-  return { country: (cf?.country as string) ?? null, region: (cf?.region as string) ?? null, city: (cf?.city as string) ?? null };
+  return {
+    country: (cf?.country as string) ?? null,
+    region: (cf?.region as string) ?? null,
+    city: (cf?.city as string) ?? null,
+    lat: coord(cf?.latitude, 90),
+    lon: coord(cf?.longitude, 180),
+  };
 }
 
 export async function ingest(
@@ -264,8 +284,8 @@ function newSession(
       .prepare(
         `INSERT OR IGNORE INTO sessions (site_id, id, visitor_id, started_at, last_seen_at, pageviews, hostname, entry_page, exit_page,
           referrer, referrer_domain, source, channel, utm_source, utm_medium, utm_campaign, utm_term, utm_content, ref,
-          country, region, city, browser, os, device)
-         VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          country, region, city, browser, os, device, lat, lon)
+         VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         site.id,
@@ -292,6 +312,8 @@ function newSession(
         browser,
         os,
         device,
+        geo.lat,
+        geo.lon,
       ),
     // Separate statement so concurrent first events (pageview + goal racing) never double count.
     ...(pageviews

@@ -41,6 +41,8 @@ Cloudflare's free plan.
 - **Where they are and what they use**: country, region, city, browser, OS, device
 - **What they did**: pages, entry pages, exit links (outbound clicks), button clicks and custom goals, funnels
 - **Who paid**: a Journey list of every customer with their source, amount, time to convert, and a full visitor timeline (visit → pages → clicks → payment)
+- **Live globe** (press `M`): every visitor on your site right now, on a 3D globe or 2D map, with a live feed of page views, goals and payments, optional sounds, light/dark map and fullscreen. Map tiles from [OpenFreeMap](https://openfreemap.org), free with no API key
+- Anonymous visitors get friendly, stable names like "brown fox"
 - Click any row to filter the whole dashboard (for example "only visitors from the launch tweet")
 - Multiple websites, one login
 
