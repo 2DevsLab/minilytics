@@ -28,10 +28,23 @@ function GoogleIcon() {
   );
 }
 
-export function GoogleButton({ label = 'Continue with Google', className = '', light = false }: { label?: string; className?: string; light?: boolean }) {
+export function GoogleButton({
+  label = 'Continue with Google',
+  className = '',
+  light = false,
+  location,
+}: {
+  label?: string;
+  className?: string;
+  light?: boolean;
+  /** Where on the page the button is, recorded with the signup_click goal. */
+  location?: string;
+}) {
   return (
     <a
       href="/api/auth/google"
+      data-ml-goal="signup_click"
+      data-ml-goal-location={location}
       className={`inline-flex h-12 items-center justify-center gap-2 rounded-xl px-6 text-base font-medium shadow-card transition ${
         light ? 'bg-white text-ink hover:bg-stone-100' : 'bg-ink text-white hover:bg-stone-700'
       } ${className}`}
@@ -76,7 +89,7 @@ export function Landing() {
   return (
     <div className="min-h-screen overflow-x-hidden">
       {spots && spots.left > 0 && (
-        <a href="#pricing" className="block bg-ink px-4 py-2 text-center text-sm text-white">
+        <a href="#pricing" className="block bg-ink px-4 py-2 text-center text-sm text-white" data-ml-goal="pricing_cta" data-ml-goal-location="top-bar">
           🎉 {lifetime ? 'Lifetime deal' : 'Founding offer'}: <b>{priceText}</b>, unlimited everything · <b>{spots.left}</b> of {spots.total} spots left
           {next ? `, then ${next}` : ''} →
         </a>
@@ -87,9 +100,9 @@ export function Landing() {
         <nav className="flex items-center gap-1 text-sm sm:gap-2">
           <a href="#how" className="hidden rounded-lg px-3 py-2 text-stone-600 hover:text-ink md:inline">How it works</a>
           <a href="#compare" className="hidden rounded-lg px-3 py-2 text-stone-600 hover:text-ink md:inline">Compare</a>
-          <a href="#pricing" className="hidden rounded-lg px-3 py-2 text-stone-600 hover:text-ink sm:inline">Pricing</a>
+          <a href="#pricing" className="hidden rounded-lg px-3 py-2 text-stone-600 hover:text-ink sm:inline" data-ml-goal="pricing_cta" data-ml-goal-location="nav">Pricing</a>
           <a href={GITHUB_URL} className="hidden rounded-lg px-3 py-2 text-stone-600 hover:text-ink sm:inline">GitHub</a>
-          <a href="/api/auth/google" className="btn">Sign in</a>
+          <a href="/api/auth/google" className="btn" data-ml-goal="signup_click" data-ml-goal-location="nav">Sign in</a>
         </nav>
       </header>
 
@@ -108,7 +121,7 @@ export function Landing() {
           websites and events, {lifetime ? <>one payment of {price}. No subscription.</> : <>{priceText}.</>}
         </p>
         <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
-          <GoogleButton label={cta} />
+          <GoogleButton label={cta} location="hero" />
           <a href="#how" className="btn h-12 px-6 text-base">See how it works</a>
         </div>
         <div className="mt-5 flex flex-wrap justify-center gap-x-5 gap-y-1 text-sm text-stone-500">
@@ -289,7 +302,7 @@ export function Landing() {
                 </li>
               ))}
             </ul>
-            <GoogleButton label="Get started" className="mt-8 w-full" />
+            <GoogleButton label="Get started" className="mt-8 w-full" location="pricing" />
             {spots && (
               <div className="mt-5">
                 <div className="h-2 overflow-hidden rounded-full bg-stone-100">
@@ -340,7 +353,7 @@ export function Landing() {
         <div className="rounded-3xl bg-ink px-6 py-14 text-center text-white sm:py-20">
           <h2 className="text-3xl font-semibold tracking-tight sm:text-5xl">Find the posts that pay your rent.</h2>
           <p className="mx-auto mt-4 max-w-xl text-lg text-stone-300">Two minutes to set up. Know what’s working by tomorrow.</p>
-          <GoogleButton light label={cta} className="mt-8" />
+          <GoogleButton light label={cta} className="mt-8" location="final-cta" />
           {spots && spots.left > 0 && (
             <p className="mt-4 text-sm text-stone-400">
               {spots.left} of {spots.total} spots left at {price} · 14-day money-back

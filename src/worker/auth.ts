@@ -212,5 +212,6 @@ export async function googleCallback(c: Context<AppEnv>) {
   if (isAdminEmail(c.env, email)) stmts.push(c.env.DB.prepare('UPDATE sites SET owner_id = ? WHERE owner_id IS NULL').bind(id));
   await c.env.DB.batch(stmts);
   await setSession(c, `u:${id}`);
-  return c.redirect('/');
+  // ?signup=1 lets the app record a "signup_completed" goal for brand-new accounts.
+  return c.redirect(existing ? '/' : '/?signup=1');
 }

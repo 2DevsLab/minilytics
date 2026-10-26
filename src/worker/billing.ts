@@ -1,4 +1,5 @@
 import type { Context } from 'hono';
+import { getCookie } from 'hono/cookie';
 import { isHosted } from './auth';
 import { forgetAllSites, type AppEnv, type Env } from './env';
 import { verifyStandardWebhook } from './lib/crypto';
@@ -38,6 +39,13 @@ export function checkout(c: Context<AppEnv>) {
     url.searchParams.set('email', user.email);
     url.searchParams.set('metadata_user_email', user.email);
   }
+  // If this site tracks itself with Minilytics, credit the purchase to the visit that led to it.
+  // (The checkout link is a server redirect, so the tracker can't tag it in the browser.)
+  const vid = getCookie(c, 'ml_vid');
+  const sid = getCookie(c, 'ml_sid');
+  if (vid) url.searchParams.set('metadata_ml_visitor_id', vid);
+  if (sid) url.searchParams.set('metadata_ml_session_id', sid);
+  // Dodo adds ?payment_id=… here; the tracker on that page links the payment to the visitor even without metadata.
   url.searchParams.set('redirect_url', `${new URL(c.req.url).origin}/billing?paid=1`);
   return c.redirect(url.toString());
 }

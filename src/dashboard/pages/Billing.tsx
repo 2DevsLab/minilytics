@@ -106,7 +106,13 @@ export function Billing() {
               ))}
             </ul>
             {plan?.checkout ? (
-              <a href="/api/billing/checkout" className="btn-dark mt-6 h-12 w-full text-base">
+              <a
+                href="/api/billing/checkout"
+                className="btn-dark mt-6 h-12 w-full text-base"
+                data-ml-goal="checkout_click"
+                data-ml-goal-plan={plan.interval === 'lifetime' ? 'lifetime' : plan.interval}
+                data-ml-goal-price={plan.price}
+              >
                 Pay {priceLabel(plan)} →
               </a>
             ) : (

@@ -47,6 +47,21 @@ export function App() {
     return () => window.removeEventListener('ml:logout', out);
   }, [refresh]);
 
+  // Tell Minilytics (when this site tracks itself) who is signed in, and record brand-new signups.
+  const userId = me?.user?.id;
+  useEffect(() => {
+    if (!me?.user || me.user.id === 'admin') return;
+    window.minilytics?.('identify', { user_id: me.user.id, email: me.user.email, name: me.user.name });
+    const q = new URLSearchParams(window.location.search);
+    if (q.get('signup') === '1') {
+      window.minilytics?.('goal', 'signup_completed');
+      q.delete('signup');
+      window.history.replaceState(null, '', window.location.pathname + (q.toString() ? `?${q}` : ''));
+    }
+    // Only when the signed-in account changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId]);
+
   if (!me) return null;
 
   const legal = /^\/(terms|privacy|refund)\/?$/.exec(path);
