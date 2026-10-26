@@ -62,7 +62,7 @@ export function Billing() {
         {user.paid ? (
           <>
             <div className="mt-6 rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-              {user.admin ? '✓ Owner account: free, unlimited.' : '✓ Founding plan active.'}
+              {user.admin ? '✓ Owner account: free, unlimited.' : '✓ Your plan is active.'}
               {!user.admin && (until ? ` Access until ${until}${user.plan_status === 'cancelled' ? ' (cancelled)' : ', renews automatically'}.` : ' Paid for life.')}
             </div>
             {!user.admin && plan?.supportEmail && (
@@ -93,10 +93,10 @@ export function Billing() {
                 {plan?.supportEmail ? ` or email ${plan.supportEmail}` : ''}.
               </div>
             )}
-            <div className="mt-6 text-sm font-medium uppercase tracking-wider text-revenue">Founding member</div>
+            <div className="mt-6 text-sm font-medium uppercase tracking-wider text-revenue">{plan?.interval === 'lifetime' ? 'Lifetime deal' : 'Founding member'}</div>
             <div className="mt-1 flex items-baseline gap-1">
               <span className="text-4xl font-semibold">{plan?.price ?? ''}</span>
-              <span className="text-stone-500">{plan ? (plan.interval === 'lifetime' ? 'one-time' : `/${plan.interval}`) : ''}</span>
+              <span className="text-stone-500">{plan ? (plan.interval === 'lifetime' ? 'lifetime' : `/${plan.interval}`) : ''}</span>
             </div>
             <ul className="mt-4 space-y-1.5 text-sm">
               {['Unlimited websites', 'Unlimited events', 'Revenue attribution, journeys, live globe'].map((f) => (
@@ -114,7 +114,7 @@ export function Billing() {
             )}
             {plan?.spots && plan.spotsLeft !== null ? (
               <p className="mt-3 text-center text-xs text-stone-500">
-                {plan.spotsLeft} of {plan.spots} founding spots left
+                {plan.spotsLeft} of {plan.spots} spots left at this price{plan.nextPrice ? `, then ${plan.nextPrice}` : ''}
               </p>
             ) : null}
           </>

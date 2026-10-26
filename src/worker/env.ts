@@ -20,7 +20,8 @@ export interface Env {
   /** Shown on the pricing page. */
   PLAN_PRICE?: string; // e.g. "$9"
   PLAN_INTERVAL?: string; // "month" | "year" | "lifetime"
-  PLAN_SPOTS?: string; // founding spots at this price, e.g. "50"
+  PLAN_SPOTS?: string; // spots at this price, e.g. "5"
+  PLAN_NEXT_PRICE?: string; // shown as "then $49" next to the spots counter
   SUPPORT_EMAIL?: string;
 }
 

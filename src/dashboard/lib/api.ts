@@ -110,6 +110,7 @@ export interface PlanInfo {
   interval: string;
   spots: number;
   spotsLeft: number | null;
+  nextPrice: string | null;
   checkout: boolean;
   supportEmail: string | null;
 }

@@ -130,9 +130,10 @@ npx wrangler secret put ADMIN_EMAILS            # your Google email(s): free, an
 npx wrangler secret put PLAN_CHECKOUT_URL       # Dodo payment link for the plan
 npx wrangler secret put PLAN_PRODUCT_ID         # that product's id (pdt_...)
 npx wrangler secret put BILLING_WEBHOOK_SECRET  # Dodo webhook → https://YOUR-DOMAIN/api/billing/webhook
-npx wrangler secret put PLAN_PRICE              # e.g. $9
-npx wrangler secret put PLAN_INTERVAL           # month | year | lifetime
-npx wrangler secret put PLAN_SPOTS              # e.g. 50 ("x of 50 founding spots left"); optional
+npx wrangler secret put PLAN_PRICE              # e.g. $29
+npx wrangler secret put PLAN_INTERVAL           # lifetime | month | year
+npx wrangler secret put PLAN_SPOTS              # e.g. 5 ("3 of 5 spots left"); optional
+npx wrangler secret put PLAN_NEXT_PRICE         # e.g. $49 ("…, then $49"); optional
 npx wrangler secret put SUPPORT_EMAIL           # shown on pricing, billing and legal pages
 npm run deploy
 ```

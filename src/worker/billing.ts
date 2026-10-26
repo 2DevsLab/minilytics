@@ -18,10 +18,11 @@ export async function planInfo(env: Env) {
   }
   return {
     hosted,
-    price: env.PLAN_PRICE || '$9',
-    interval: env.PLAN_INTERVAL || 'month',
+    price: env.PLAN_PRICE || '$29',
+    interval: env.PLAN_INTERVAL || 'lifetime',
     spots,
     spotsLeft: spots ? Math.max(0, spots - taken) : null,
+    nextPrice: env.PLAN_NEXT_PRICE || null,
     checkout: !!env.PLAN_CHECKOUT_URL,
     supportEmail: env.SUPPORT_EMAIL || null,
   };

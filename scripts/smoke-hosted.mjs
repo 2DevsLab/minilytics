@@ -1,6 +1,6 @@
 // End-to-end test of hosted (SaaS) mode against `wrangler dev` started with the Google/billing vars, e.g.:
 //   npx wrangler dev --port 8788 --var GOOGLE_CLIENT_ID:test --var GOOGLE_CLIENT_SECRET:test \
-//     --var ADMIN_EMAILS:owner@example.com --var PLAN_PRODUCT_ID:pdt_plan --var PLAN_SPOTS:50 \
+//     --var ADMIN_EMAILS:owner@example.com --var PLAN_PRODUCT_ID:pdt_plan --var PLAN_SPOTS:5 --var 'PLAN_PRICE:$29' --var PLAN_INTERVAL:lifetime \
 //     --var PLAN_CHECKOUT_URL:https://checkout.dodopayments.com/buy/pdt_plan?quantity=1 --var BILLING_WEBHOOK_SECRET:whsec_dGVzdC1iaWxsaW5nLXNlY3JldA==
 // Users are created directly in the local DB and their session cookies signed with the local SESSION_SECRET.
 import { execSync } from 'node:child_process';
@@ -45,7 +45,7 @@ const A = cookieFor(alice), B = cookieFor(bob), O = cookieFor(owner);
 let r = await call('/api/auth/me');
 assert(r.body.hosted === true && r.body.loggedIn === false, 'hosted mode, logged out');
 r = await call('/api/public/plan');
-assert(r.body.hosted && r.body.checkout && r.body.spots === 50, `plan info (${r.body.spotsLeft} spots left)`);
+assert(r.body.hosted && r.body.checkout && r.body.spots > 0, `plan info (${r.body.price} ${r.body.interval}, ${r.body.spotsLeft} of ${r.body.spots} left${r.body.nextPrice ? ', then ' + r.body.nextPrice : ''})`);
 const spotsBefore = r.body.spotsLeft;
 r = await call('/api/auth/google');
 assert(r.status === 302 && r.location.startsWith('https://accounts.google.com/') && r.location.includes('client_id=test'), 'Google sign-in redirect');
@@ -101,6 +101,11 @@ assert(r.status === 200 && r.body.current.visitors === 1, 'events ignored after 
 await billing(payment(bob, 'pdt_plan', 'pay_b_' + run));
 await billing({ type: 'refund.succeeded', data: { payment_id: 'pay_b_' + run, refund_id: 'ref_' + run, is_partial: false } });
 assert((await call('/api/auth/me', { cookie: B })).body.user.paid === false, 'full refund removes access');
+
+// One-time (lifetime) payment: no subscription id means access never expires
+await billing({ type: 'payment.succeeded', data: { payment_id: 'pay_life_' + run, product_cart: [{ product_id: 'pdt_plan', quantity: 1 }], customer: { email: 'x@example.com' }, metadata: { user_id: bob } } });
+const bobLife = (await call('/api/auth/me', { cookie: B })).body.user;
+assert(bobLife.paid === true && bobLife.plan_until === null, 'one-time payment = lifetime access (no end date)');
 
 // Bad signature
 r = await fetch(BASE + '/api/billing/webhook', { method: 'POST', headers: { 'webhook-id': 'x', 'webhook-timestamp': String(Math.floor(Date.now() / 1000)), 'webhook-signature': 'v1,bad' }, body: '{}' });

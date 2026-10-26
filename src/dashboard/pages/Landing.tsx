@@ -14,7 +14,7 @@ export function usePlan() {
 
 export function priceLabel(p: PlanInfo | null) {
   if (!p) return '';
-  return p.interval === 'lifetime' ? `${p.price} one-time` : `${p.price}/${p.interval}`;
+  return p.interval === 'lifetime' ? `${p.price} lifetime` : `${p.price}/${p.interval}`;
 }
 
 function GoogleIcon() {
@@ -66,15 +66,19 @@ export function Landing() {
   const plan = usePlan();
   const error = new URLSearchParams(window.location.search).get('login_error');
   const spots = plan?.spots && plan.spotsLeft !== null ? { left: plan.spotsLeft, total: plan.spots } : null;
-  const price = plan?.price ?? '$9';
-  const per = plan?.interval === 'lifetime' ? 'one-time' : `/${plan?.interval ?? 'month'}`;
+  const price = plan?.price ?? '$29';
+  const lifetime = (plan?.interval ?? 'lifetime') === 'lifetime';
+  const per = lifetime ? 'lifetime' : `/${plan?.interval}`;
+  const priceText = lifetime ? `${price} once` : `${price}/${plan?.interval}`;
+  const next = plan?.nextPrice;
   const cta = plan ? `Get started for ${priceLabel(plan)}` : 'Get started';
 
   return (
     <div className="min-h-screen overflow-x-hidden">
       {spots && spots.left > 0 && (
         <a href="#pricing" className="block bg-ink px-4 py-2 text-center text-sm text-white">
-          🎉 Founding offer: <b>{price}{per}</b>, unlimited everything · <b>{spots.left}</b> of {spots.total} spots left →
+          🎉 {lifetime ? 'Lifetime deal' : 'Founding offer'}: <b>{priceText}</b>, unlimited everything · <b>{spots.left}</b> of {spots.total} spots left
+          {next ? `, then ${next}` : ''} →
         </a>
       )}
 
@@ -101,7 +105,7 @@ export function Landing() {
         </h1>
         <p className="mx-auto mt-6 max-w-2xl text-lg text-stone-600 sm:text-xl">
           Minilytics follows every visitor from the first click to the payment, so you know exactly what to post more of. Unlimited
-          websites and events, {price}{per}.
+          websites and events, {lifetime ? <>one payment of {price}. No subscription.</> : <>{priceText}.</>}
         </p>
         <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
           <GoogleButton label={cta} />
@@ -203,8 +207,8 @@ export function Landing() {
       <Section
         id="compare"
         eyebrow="Compare"
-        title={<>Same price. <span className="text-revenue">No limits.</span></>}
-        sub="Most analytics tools charge by traffic and by website. Minilytics doesn’t."
+        title={lifetime ? <>Pay once. <span className="text-revenue">No limits.</span></> : <>Same price. <span className="text-revenue">No limits.</span></>}
+        sub={lifetime ? 'Others charge every month, by traffic and by website. Minilytics is one payment.' : 'Most analytics tools charge by traffic and by website. Minilytics doesn’t.'}
       >
         <div className="card mx-auto max-w-3xl overflow-x-auto p-2">
           <table className="w-full min-w-[520px] text-left">
@@ -218,7 +222,8 @@ export function Landing() {
             </thead>
             <tbody className="text-[15px]">
               {[
-                ['Price', `${price}${per}`, '$9/month', '$9/month'],
+                ['Price', priceText, '$9/month', '$9/month'],
+                ...(lifetime ? [['First year', price, '$108', '$108'], ['Every year after', '$0', '$108', '$108']] : []),
                 ['Websites', 'Unlimited', '1', '1'],
                 ['Monthly events', 'Unlimited', '10k', '10k pageviews'],
                 ['Revenue by traffic source', <Check key="c" />, <Check key="c" />, 'Higher plan'],
@@ -262,7 +267,7 @@ export function Landing() {
           <div className="card relative p-8">
             {spots && (
               <div className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-revenue px-3 py-1 text-xs font-semibold text-white">
-                Founding member price
+                {lifetime ? 'Lifetime deal' : 'Founding member price'}
               </div>
             )}
             <div className="flex items-baseline gap-1">
@@ -291,7 +296,7 @@ export function Landing() {
                   <div className="h-full bg-revenue" style={{ width: `${((spots.total - spots.left) / spots.total) * 100}%` }} />
                 </div>
                 <p className="mt-2 text-center text-sm text-stone-500">
-                  <b className="text-ink">{spots.left}</b> of {spots.total} founding spots left at this price
+                  <b className="text-ink">{spots.left}</b> of {spots.total} spots left at this price{next ? `, then ${next}` : ''}
                 </p>
               </div>
             )}
@@ -311,7 +316,13 @@ export function Landing() {
             ['Which payment providers work?', 'Dodo Payments works out of the box (one webhook). Any other provider can send payments with a simple API call.'],
             ['What about ad blockers?', 'You can serve the script from your own domain with a one-line rewrite, so blockers don’t see it. Payments are always recorded either way, because they come from the webhook.'],
             ['Do I need a cookie banner?', 'It uses two first-party cookies and no IP storage. Whether you need a consent banner depends on your visitors’ country; in the EU you may.'],
-            ['What happens after the founding spots are gone?', 'The price goes up for new customers.'],
+            ...(lifetime
+              ? [['Is lifetime really lifetime?', 'Yes. Pay once and keep unlimited access for as long as Minilytics runs. No renewals, no surprise bills.']]
+              : []),
+            [
+              'What happens after these spots are gone?',
+              next ? `The price goes up to ${next} for new customers. If you’re in, your price never changes.` : 'The price goes up for new customers. If you’re in, your price never changes.',
+            ],
             ['Can I self-host it instead?', 'Yes. Minilytics is open source (MIT), and you can deploy it free on your own Cloudflare account from GitHub.'],
           ].map(([q, a]) => (
             <details key={q} className="card group p-5">
@@ -332,7 +343,7 @@ export function Landing() {
           <GoogleButton light label={cta} className="mt-8" />
           {spots && spots.left > 0 && (
             <p className="mt-4 text-sm text-stone-400">
-              {spots.left} of {spots.total} founding spots left · 14-day money-back
+              {spots.left} of {spots.total} spots left at {price} · 14-day money-back
             </p>
           )}
         </div>
