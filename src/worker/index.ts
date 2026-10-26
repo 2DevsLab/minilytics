@@ -2,6 +2,7 @@ import { Hono, type Context, type Next } from 'hono';
 import { cors } from 'hono/cors';
 import { handleEvent } from './collect';
 import { flagBit, forgetSite, parseSite, type AppEnv, type Site, type SiteRow } from './env';
+import { forgetPublicReads, publicRoutes } from './publicRead';
 import { clearSession, currentUser, googleCallback, googleStart, isHosted, login, requireUser, siteAccessSql } from './auth';
 import { billingWebhook, checkout, planInfo } from './billing';
 import { randomId } from './lib/crypto';
@@ -40,6 +41,7 @@ app.get('/api/auth/me', async (c) => {
 // ---------- billing (hosted mode)
 
 app.get('/api/public/plan', async (c) => c.json(await planInfo(c.env)));
+publicRoutes(app);
 app.post('/api/billing/webhook', billingWebhook);
 app.get('/api/billing/checkout', requireUser, checkout);
 
@@ -179,6 +181,7 @@ app.patch('/api/sites/:id', async (c) => {
     )
     .run();
   forgetSite(site.id);
+  await forgetPublicReads(new URL(c.req.url).origin, site.id);
   return c.json(publicSite(next));
 });
 
@@ -196,6 +199,7 @@ app.delete('/api/sites/:id', async (c) => {
     ).concat(c.env.DB.prepare('DELETE FROM sites WHERE id = ?').bind(id)),
   );
   forgetSite(id);
+  await forgetPublicReads(new URL(c.req.url).origin, id);
   return c.json({ ok: true });
 });
 
