@@ -23,8 +23,13 @@ async function call(path, opts = {}) {
 }
 
 const ua = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0 Safari/537.36';
-const event = (siteId, payload) =>
-  fetch(BASE + '/api/event', { method: 'POST', headers: { 'content-type': 'text/plain', 'user-agent': ua }, body: JSON.stringify({ w: siteId, ...payload }) });
+const event = (siteId, payload, { origin = 'https://smoke-test.com', cookie = true } = {}) => {
+  const headers = { 'content-type': 'text/plain', 'user-agent': ua };
+  if (origin) headers.origin = origin;
+  const body = { w: siteId, ...payload };
+  if (cookie) body.ck = 1;
+  return fetch(BASE + '/api/event', { method: 'POST', headers, body: JSON.stringify(body) });
+};
 
 assert((await call('/api/sites')).status === 401, 'dashboard API needs login');
 assert((await call('/api/auth/login', { method: 'POST', body: JSON.stringify({ password: 'nope' }) })).status === 401, 'wrong password rejected');
@@ -39,15 +44,18 @@ assert(site.domain === 'smoke-test.com', 'domain is normalised');
 const vid = crypto.randomUUID(), sid = crypto.randomUUID();
 let r = await event(site.id, { t: 'pageview', u: 'https://smoke-test.com/?utm_campaign=launch-tweet', r: 'https://t.co/abc', vid, sid, sw: 1440 });
 assert(r.status === 202, 'pageview accepted');
-r = await event(site.id, { t: 'pageview', u: 'https://evil.com/', r: '', vid, sid });
-assert(r.status === 403, 'other domains rejected');
+r = await event(site.id, { t: 'pageview', u: 'https://evil.com/', r: '', vid, sid }, { origin: null });
+assert(r.status === 403, 'missing Origin rejected');
+r = await event(site.id, { t: 'pageview', u: 'https://smoke-test.com/', vid, sid }, { origin: 'https://evil.com' });
+assert(r.status === 403, 'foreign Origin rejected');
 r = await fetch(BASE + '/api/event', { method: 'POST', headers: { 'user-agent': 'Googlebot/2.1' }, body: JSON.stringify({ w: site.id, t: 'pageview', u: 'https://smoke-test.com/', vid, sid }) });
 assert(r.status === 202, 'bots silently dropped');
 await event(site.id, { t: 'pageview', u: 'https://app.smoke-test.com/pricing/', r: 'https://smoke-test.com/', vid, sid });
 await event(site.id, { t: 'goal', u: 'https://app.smoke-test.com/pricing', n: 'checkout_click', p: { plan: 'pro' }, vid, sid });
 await event(site.id, { t: 'outbound', u: 'https://app.smoke-test.com/pricing', n: 'https://checkout.dodopayments.com/buy/pdt_1', vid, sid });
 await event(site.id, { t: 'ping', u: 'https://app.smoke-test.com/pricing', d: 42000, vid, sid });
-await event(site.id, { t: 'identify', u: 'https://app.smoke-test.com/pricing', p: { email: 'Jane@Acme.com', name: 'Jane Doe' }, vid, sid });
+r = await event(site.id, { t: 'identify', u: 'https://app.smoke-test.com/pricing', p: { email: 'Jane@Acme.com', name: 'Jane Doe' }, vid, sid });
+assert(r.status === 400, 'browser identify is rejected');
 
 // A second, bouncing visitor from Google
 await event(site.id, { t: 'pageview', u: 'https://smoke-test.com/blog/seo-article', r: 'https://www.google.com/', vid: crypto.randomUUID(), sid: crypto.randomUUID() });
@@ -185,6 +193,9 @@ for (const g of ['hour', 'day', 'week', 'month']) {
 
 const rt = (await call(`/api/sites/${site.id}/realtime`)).body;
 assert(rt.visitors.some((v) => v.visitor_id === vid) && rt.feed.some((f) => f.type === 'payment'), `live view: ${rt.visitors.length} online, ${rt.feed.length} recent events`);
+
+r = await event(site.id, { t: 'pageview', u: 'https://evil.com/', vid: crypto.randomUUID(), sid: crypto.randomUUID() });
+assert(r.status === 202, 'matching Origin accepts a page URL on another host');
 
 await call(`/api/sites/${site.id}`, { method: 'DELETE' });
 assert((await call(`/api/sites/${site.id}`)).status === 404, 'site deleted');

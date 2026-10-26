@@ -1,4 +1,5 @@
-import type { Site } from './env'
+import type { Env, Site } from './env'
+import { allowIngest } from './limit'
 import { startOfDay } from './lib/time'
 
 declare const visitorIdBrand: unique symbol
@@ -71,6 +72,10 @@ export interface IngestFacts {
 }
 
 export type IngestDenyReason = 'page-url' | 'origin' | 'cookie-id' | 'client-ip' | 'salt' | 'identify'
+
+export type GateResult =
+  | { ok: false; status: 400 | 403 | 429 | 503; reason: IngestDenyReason | 'rate' }
+  | { ok: true; event: TrackedEvent }
 
 export type IngestDecision =
   | { ok: false; status: 400 | 403 | 503; reason: IngestDenyReason }
@@ -199,5 +204,51 @@ export async function decideIngest(facts: IngestFacts): Promise<IngestDecision> 
     sessionId: brandSession(sessionId),
     geo: requestGeo(facts.cf),
     page,
+  }
+}
+
+export async function gateEvent(
+  env: Env,
+  request: Request,
+  site: Site,
+  event: RawEvent,
+  ua: string,
+  now: number,
+): Promise<GateResult> {
+  const ip = clientIp(request)
+  if (!(await allowIngest(env, ip, site.id, now))) return { ok: false, status: 429, reason: 'rate' }
+  const cf = (request as Request & { cf?: CfGeo | null }).cf ?? null
+  const decision = await decideIngest({
+    origin: request.headers.get('origin'),
+    referer: request.headers.get('referer'),
+    ip,
+    ua,
+    cf,
+    now,
+    site,
+    scriptCookie: event.scriptCookie,
+    clientVid: event.clientVid,
+    clientSid: event.clientSid,
+    salt: visitorSalt(env),
+    pageUrl: event.pageUrl,
+  })
+  if (!decision.ok) return decision
+  if (event.type === 'identify') return { ok: false, status: 400, reason: 'identify' }
+  return {
+    ok: true,
+    event: {
+      type: event.type,
+      visitorId: decision.visitorId,
+      sessionId: decision.sessionId,
+      page: decision.page,
+      referrer: event.referrer,
+      geo: decision.geo,
+      ua,
+      screenWidth: event.screenWidth,
+      name: event.name,
+      props: event.props,
+      durationMs: event.durationMs,
+      now,
+    },
   }
 }
