@@ -80,6 +80,32 @@ npx wrangler secret put ADMIN_PASSWORD     # the password you'll log in with (us
 npx wrangler secret put SESSION_SECRET     # any long random text, e.g. the output of: openssl rand -hex 32
 ```
 
+`ADMIN_PASSWORD` can be that password, or a hash. To store a hash instead:
+
+```bash
+node scripts/hash-admin-password.mjs 'your password'
+npx wrangler secret put ADMIN_PASSWORD     # paste the $pbkdf2-sha256$... line
+```
+
+A password that is already deployed as plaintext keeps working.
+
+`SESSION_SECRET` also salts cookieless visitor ids. To rotate those ids without logging yourself out, set a separate salt:
+
+```bash
+npx wrangler secret put VISITOR_SALT
+```
+
+Self-hosted Cloudflare Access is optional. Set both values, and do not set the Google secrets:
+
+```bash
+npx wrangler secret put CF_ACCESS_TEAM_DOMAIN   # the team name, before .cloudflareaccess.com
+npx wrangler secret put CF_ACCESS_AUD           # the Access application audience
+```
+
+Access applies only to the self-hosted admin. Hosted Google login ignores it. If the Access token is missing or invalid, the password form still works.
+
+Ingest limits are 60 requests per minute from one IP and 600 per minute for one site. Each isolate enforces that on its own. If you need one ceiling across isolates, create the `INGEST_IP` and `INGEST_SITE` rate limit bindings in Cloudflare and bind both of them. They are not listed in `wrangler.jsonc`. One binding without the other is ignored.
+
 Typing is hidden; that's normal. If asked *"There doesn't seem to be a Worker called minilytics… create it?"*, answer **Yes**.
 
 **4. Deploy**
@@ -144,15 +170,80 @@ The Terms, Privacy and Refund pages (`/terms`, `/privacy`, `/refund`) are plain-
 
 ## Install on a website
 
+New sites use `Europe/Prague` unless the create form sends another IANA timezone. A site that already has a row keeps the timezone stored on that row.
+
 ```html
 <script defer data-website-id="SITE_ID" src="https://YOUR-MINILYTICS-HOST/js/script.js"></script>
 ```
 
+The default script sets no cookie and does not tag Dodo links. The Worker builds a daily visitor id from the connecting IP, the User-Agent, and the site timezone. The IP itself is not stored. The id changes when the IP, the browser, or the local day changes.
+
+Turn on **Cookie visitors** in Settings when you want the old `ml_vid` and `ml_sid` cookies and Dodo link tagging. The install snippet then includes `data-cookie="true"`:
+
+```html
+<script
+  defer
+  data-website-id="SITE_ID"
+  data-cookie="true"
+  src="https://YOUR-MINILYTICS-HOST/js/script.js"
+></script>
+```
+
+Read those cookies on the server only when the embed has `data-cookie="true"`. On the default embed they are absent, and this returns empty strings.
+
+```ts
+import { cookies } from 'next/headers'
+
+const jar = await cookies()
+const metadata = {
+  ml_visitor_id: jar.get('ml_vid')?.value ?? '',
+  ml_session_id: jar.get('ml_sid')?.value ?? '',
+}
+```
+
+Identify a visitor from your server. Keep the API key in `MINILYTICS_API_KEY`. The script never sees it. The first email, name, or user id sticks. A later call does not replace it.
+
+```ts
+await fetch(`${host}/api/v1/identify`, {
+  method: 'POST',
+  headers: {
+    authorization: `Bearer ${process.env.MINILYTICS_API_KEY}`,
+    'content-type': 'application/json',
+  },
+  body: JSON.stringify({
+    visitor_id: visitorId,
+    email: 'jane@acme.com',
+    name: 'Jane',
+    user_id: 'user_123',
+  }),
+})
+```
+
 - **Button clicks / goals:** `<button data-ml-goal="signup_click">`, or `window.minilytics('goal', 'signup', { plan: 'pro' })`
-- **Identify logged-in users:** `window.minilytics('identify', { user_id, email, name })`
 - **Ignore your own visits:** open `https://yoursite.com/?ml_ignore=true` once per browser
 - **Single-page apps** (Next.js, React Router…) are handled automatically
-- **Subdomains:** `app.yoursite.com` and `yoursite.com` share the same visitor, because the cookie is set on the root domain
+- **Subdomains:** `app.yoursite.com` and `yoursite.com` count as the same site. In cookie mode they share `ml_vid` because the cookie is set on the root domain
+
+## Public stats
+
+Public stats stay off until you turn them on in Settings.
+
+`https://YOUR-HOST/share/SITE_ID` works while logged out. It requests one period at a time. `period` is `24h`, `7d`, or `30d`. If you omit it, the Worker uses `7d`.
+
+```ts
+const res = await fetch(`/api/public/${siteId}/share?period=${period}`)
+```
+
+The live badge runs on your site:
+
+```js
+const res = await fetch(`https://YOUR-HOST/api/public/${siteId}/live`)
+if (res.ok) {
+  const { online, today, last24h } = await res.json()
+}
+```
+
+`online` is people whose session started in the last 6 hours and who were seen in the last 5 minutes. `today` follows the site timezone. `last24h` is the rolling 24 hours. The Worker sends `Access-Control-Allow-Origin` only when the request `Origin` is the site domain or a subdomain of it. A missing site and a site with Public stats off both return 404 `{ "error": "not found" }`. The JSON has no revenue, email, name, or API key.
 
 ### Tracking a specific tweet / article
 
@@ -171,7 +262,7 @@ article people found you through.
 
 1. In Dodo → Developer → Webhooks, add `https://YOUR-HOST/api/webhooks/dodo/SITE_ID` and subscribe to
    `payment.succeeded` and `refund.succeeded`. Paste the signing secret (`whsec_…`) into the site settings.
-2. Pass the visitor cookies as metadata when creating a checkout:
+2. When Cookie visitors is on, pass the visitor cookies as metadata when creating a checkout:
 
 ```ts
 const jar = await cookies(); // next/headers
@@ -191,7 +282,7 @@ Using Dodo **payment links**? The script adds `metadata_ml_visitor_id` / `metada
 **How credit is given:** a payment goes to the paying visitor's last visit that came from a real source (last non-direct
 touch). So "clicked a tweet, came back directly 17 days later and paid" is credited to the tweet. If metadata is
 missing, Minilytics tries, in order: the return page (`?payment_id=`), an earlier payment by the same customer
-(renewals), an email you `identify()`'d, and finally checkout timing (used only when exactly one visitor clicked a Dodo
+(renewals), an email you sent to `POST /api/v1/identify`, and finally checkout timing (used only when exactly one visitor clicked a Dodo
 checkout link in the 3 hours before the payment). The Journey tab shows how each payment was matched, and **Try
 matching again** re-runs this for older payments.
 Refunds are subtracted from revenue.
@@ -209,8 +300,8 @@ No analytics tool is 100% accurate. These are the main gaps and how this project
 
 - **Ad blockers** block some analytics domains. Proxy the script through your own domain (Settings shows a Next.js
   rewrite). Payments are always recorded by the webhook, even when the visitor's browser blocked tracking.
-- **Safari** keeps cookies set by JavaScript for at most 7 days. A Safari visitor who returns after more than a week counts as new. The
-  email fallback above recovers most of these payments.
+- **Safari** keeps cookies set by JavaScript for at most 7 days. That limit applies when Cookie visitors is on. A Safari visitor who returns after more than a week then counts as new. The
+  email fallback above recovers most of these payments. The default cookieless count has no cookie to expire. It changes when the address or the browser changes.
 - **Bots** are filtered by user agent and the `navigator.webdriver` flag.
 - Revenue in a different currency than the site's is converted only when Dodo gives a settlement amount in the site's currency.
 
@@ -230,7 +321,7 @@ node scripts/smoke-hosted.mjs         # hosted-mode test (see the comment at the
 
 ## How it's built
 
-- `public/js/script.js`: the tracker, 9 KB (about 3.5 KB gzipped). It handles cookies, pageviews, engaged time, goals, outbound links and Dodo link tagging
+- `public/js/script.js`: the tracker. By default it sends pageviews, engaged time, goals, and outbound links without cookies. `data-cookie="true"` turns cookies and Dodo link tagging back on
 - `src/worker`: a Hono app on Cloudflare Workers that handles event ingestion, the Dodo webhook, the payments and goals API, and stats queries on D1 (SQLite)
 - `src/dashboard`: the React dashboard (Vite, Tailwind, Recharts), served as static files by the same Worker
 - `migrations/`: the database schema

@@ -67,10 +67,10 @@ export function Legal({ page }: { page: 'terms' | 'privacy' | 'refund' }) {
             <h2>Your visitors</h2>
             <p>
               For websites you track, the script records pages viewed, referrers, campaign tags, button clicks you choose to track,
-              approximate location (country, region, city, coordinates rounded to about 1 km), browser, operating system and device. It
-              uses two first-party cookies (a random visitor id and a session id) and does not store IP addresses. Email addresses in page
-              URLs are removed before sending. You decide whether to link visitors to customers (for example with payment metadata or
-              identify()).
+              approximate location (country, region, city, coordinates rounded to about 1 km), browser, operating system and device. By
+              default it sets no cookie and stores no IP address. A site can opt in to two first-party cookies (a random visitor id and a
+              session id). Email addresses in page URLs are removed before sending. You decide whether to link visitors to customers (for
+              example with payment metadata or the server identify API).
             </p>
             <p>
               For this data, you are the controller and we process it on your behalf to provide your analytics. We don't sell it or use

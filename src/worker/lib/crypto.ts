@@ -72,6 +72,46 @@ export async function verifyToken(secret: string, token: string | undefined): Pr
   return safeEqual(expected, token) ? value : null;
 }
 
-export function passwordsMatch(a: string, b: string): boolean {
-  return safeEqual(a, b);
+const PBKDF2 = /^\$pbkdf2-sha256\$i=(\d+)\$([^$]+)\$([^$]+)$/;
+const PBKDF2_MAX_ITERATIONS = 2_000_000;
+
+function timingSafeEqual(left: BufferSource, right: BufferSource): boolean {
+  const subtle = crypto.subtle as SubtleCrypto & { timingSafeEqual(a: BufferSource, b: BufferSource): boolean };
+  return subtle.timingSafeEqual(left, right);
+}
+
+function equalBytes(candidate: Uint8Array, expected: Uint8Array): boolean {
+  const left = candidate as BufferSource;
+  const right = expected as BufferSource;
+  if (candidate.byteLength !== expected.byteLength) {
+    timingSafeEqual(left, left);
+    return false;
+  }
+  return timingSafeEqual(left, right);
+}
+
+async function sha256(value: string): Promise<Uint8Array> {
+  return new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode(value)));
+}
+
+export async function passwordMatches(secret: string, candidate: string): Promise<boolean> {
+  if (secret.startsWith('$pbkdf2-sha256$')) {
+    const parsed = PBKDF2.exec(secret);
+    if (!parsed) return false;
+    const iterations = Number(parsed[1]);
+    if (!Number.isInteger(iterations) || iterations < 1 || iterations > PBKDF2_MAX_ITERATIONS) return false;
+    let salt: Uint8Array<ArrayBuffer>;
+    let expected: Uint8Array<ArrayBuffer>;
+    try {
+      salt = b64ToBytes(parsed[2]);
+      expected = b64ToBytes(parsed[3]);
+    } catch {
+      return false;
+    }
+    if (expected.byteLength === 0) return false;
+    const key = await crypto.subtle.importKey('raw', enc.encode(candidate), 'PBKDF2', false, ['deriveBits']);
+    const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations }, key, expected.byteLength * 8);
+    return equalBytes(new Uint8Array(bits), expected);
+  }
+  return equalBytes(await sha256(secret), await sha256(candidate));
 }

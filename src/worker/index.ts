@@ -1,16 +1,26 @@
 import { Hono, type Context, type Next } from 'hono';
 import { cors } from 'hono/cors';
 import { handleEvent } from './collect';
-import { forgetSite, type AppEnv, type Site } from './env';
-import { clearSession, currentUser, googleCallback, googleStart, isHosted, requireUser, setSession, siteAccessSql } from './auth';
+import { flagBit, forgetSite, parseSite, type AppEnv, type Site, type SiteRow } from './env';
+import { forgetPublicReads, publicRoutes } from './publicRead';
+import { clearSession, currentUser, googleCallback, googleStart, isHosted, login, requireUser, siteAccessSql } from './auth';
 import { billingWebhook, checkout, planInfo } from './billing';
-import { passwordsMatch, randomId } from './lib/crypto';
-import { handleDodoWebhook, handleGoalApi, handlePaymentApi, rematchPayments } from './payments';
+import { randomId } from './lib/crypto';
+import { createSiteTimezone } from '../shared/siteDefaults';
+import { handleDodoWebhook, handleGoalApi, handleIdentify, handlePaymentApi, rematchPayments } from './payments';
 import { breakdown, customers, funnel, makeCtx, overview, realtime, visitorProfile, visitors, type FunnelStep } from './stats';
 
 const app = new Hono<AppEnv>();
-const MAX_FAILURES = 10;
-const LOCKOUT_MS = 15 * 60_000;
+
+app.use('/api/*', async (c, next) => {
+  await next();
+  c.header('X-Content-Type-Options', 'nosniff');
+  c.header('X-Frame-Options', 'DENY');
+  c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
+  c.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  const path = new URL(c.req.url).pathname;
+  if (!/^\/api\/public\/[^/]+\/(?:live|share)$/.test(path)) c.header('Cache-Control', 'no-store');
+});
 
 // ---------- public: tracking, webhooks, server-side API
 
@@ -19,36 +29,11 @@ app.post('/api/event', handleEvent);
 app.post('/api/webhooks/dodo/:siteId', handleDodoWebhook);
 app.post('/api/v1/payments', handlePaymentApi);
 app.post('/api/v1/goals', handleGoalApi);
+app.post('/api/v1/identify', handleIdentify);
 
 // ---------- login
 
-app.post('/api/auth/login', async (c) => {
-  if (isHosted(c.env)) return c.json({ error: 'Use "Continue with Google".' }, 400);
-  if (!c.env.ADMIN_PASSWORD || !c.env.SESSION_SECRET) {
-    return c.json({ error: 'Set ADMIN_PASSWORD and SESSION_SECRET (see README).' }, 500);
-  }
-  // Lock an IP out after too many wrong passwords, so a public dashboard can't be brute-forced.
-  const ip = c.req.header('cf-connecting-ip') ?? 'unknown';
-  const now = Date.now();
-  const recent = await c.env.DB.prepare('SELECT COUNT(*) AS n FROM login_failures WHERE ip = ? AND ts > ?')
-    .bind(ip, now - LOCKOUT_MS)
-    .first<{ n: number }>();
-  if ((recent?.n ?? 0) >= MAX_FAILURES) {
-    return c.json({ error: 'Too many wrong attempts. Try again in 15 minutes.' }, 429);
-  }
-  const { password } = await c.req.json<{ password?: string }>().catch(() => ({ password: undefined }));
-  if (!password || !passwordsMatch(password, c.env.ADMIN_PASSWORD)) {
-    await c.env.DB.batch([
-      c.env.DB.prepare('INSERT INTO login_failures (ip, ts) VALUES (?, ?)').bind(ip, now),
-      c.env.DB.prepare('DELETE FROM login_failures WHERE ts < ?').bind(now - LOCKOUT_MS),
-    ]);
-    await new Promise((r) => setTimeout(r, 500));
-    return c.json({ error: 'Wrong password' }, 401);
-  }
-  await c.env.DB.prepare('DELETE FROM login_failures WHERE ip = ?').bind(ip).run();
-  await setSession(c, 'admin');
-  return c.json({ ok: true });
-});
+app.post('/api/auth/login', login);
 
 app.get('/api/auth/google', googleStart);
 app.get('/api/auth/google/callback', googleCallback);
@@ -66,6 +51,7 @@ app.get('/api/auth/me', async (c) => {
 // ---------- billing (hosted mode)
 
 app.get('/api/public/plan', async (c) => c.json(await planInfo(c.env)));
+publicRoutes(app);
 app.post('/api/billing/webhook', billingWebhook);
 app.get('/api/billing/checkout', requireUser, checkout);
 
@@ -76,11 +62,11 @@ app.use('/api/sites/*', requireUser);
 
 const loadSite = async (c: Context<AppEnv>, next: Next) => {
   const access = siteAccessSql(c.env, c.get('user'));
-  const site = await c.env.DB.prepare(`SELECT s.* FROM sites s WHERE s.id = ? AND ${access.sql}`)
+  const row = await c.env.DB.prepare(`SELECT s.* FROM sites s WHERE s.id = ? AND ${access.sql}`)
     .bind(c.req.param('id'), ...access.params)
-    .first<Site>();
-  if (!site) return c.json({ error: 'site not found' }, 404);
-  c.set('site', site);
+    .first<SiteRow>();
+  if (!row) return c.json({ error: 'site not found' }, 404);
+  c.set('site', parseSite(row));
   await next();
 };
 app.use('/api/sites/:id', loadSite);
@@ -119,11 +105,14 @@ app.get('/api/sites', async (c) => {
   ]);
   const by = new Map((stats.results as any[]).map((r) => [r.site_id, r]));
   return c.json(
-    (sites.results as unknown as Site[]).map((s) => ({
-      ...publicSite(s),
-      visitors24h: by.get(s.id)?.visitors ?? 0,
-      online: by.get(s.id)?.online ?? 0,
-    })),
+    (sites.results as SiteRow[]).map((row) => {
+      const s = parseSite(row);
+      return {
+        ...publicSite(s),
+        visitors24h: by.get(s.id)?.visitors ?? 0,
+        online: by.get(s.id)?.online ?? 0,
+      };
+    }),
   );
 });
 
@@ -133,7 +122,7 @@ app.post('/api/sites', async (c) => {
   const b = await c.req.json<Partial<Site>>().catch(() => ({}) as Partial<Site>);
   const domain = cleanDomain(b.domain ?? '');
   if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(domain)) return c.json({ error: 'Enter a domain like example.com' }, 400);
-  const tz = b.timezone && validTimezone(b.timezone) ? b.timezone : 'UTC';
+  const tz = createSiteTimezone(b.timezone, validTimezone);
   const site: Site = {
     id: randomId(8),
     name: (b.name || domain).slice(0, 100),
@@ -143,6 +132,8 @@ app.post('/api/sites', async (c) => {
     api_key: 'ml_' + randomId(16),
     dodo_webhook_secret: null,
     created_at: Date.now(),
+    public_stats: false,
+    cookie_visitors: false,
   };
   await c.env.DB.prepare(
     'INSERT INTO sites (id, name, domain, timezone, currency, api_key, dodo_webhook_secret, created_at, owner_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -176,12 +167,31 @@ app.patch('/api/sites/:id', async (c) => {
     const ids = b.dodo_product_ids.split(/[\s,]+/).filter((x) => /^pdt_[\w-]+$/.test(x));
     next.dodo_product_ids = ids.join(',') || null;
   }
+  if (b.public_stats !== undefined) {
+    if (typeof b.public_stats !== 'boolean') return c.json({ error: 'public_stats must be a boolean' }, 400);
+    next.public_stats = b.public_stats;
+  }
+  if (b.cookie_visitors !== undefined) {
+    if (typeof b.cookie_visitors !== 'boolean') return c.json({ error: 'cookie_visitors must be a boolean' }, 400);
+    next.cookie_visitors = b.cookie_visitors;
+  }
   await c.env.DB.prepare(
-    'UPDATE sites SET name = ?, domain = ?, timezone = ?, currency = ?, dodo_webhook_secret = ?, dodo_product_ids = ? WHERE id = ?',
+    'UPDATE sites SET name = ?, domain = ?, timezone = ?, currency = ?, dodo_webhook_secret = ?, dodo_product_ids = ?, public_stats = ?, cookie_visitors = ? WHERE id = ?',
   )
-    .bind(next.name, next.domain, next.timezone, next.currency, next.dodo_webhook_secret, next.dodo_product_ids ?? null, site.id)
+    .bind(
+      next.name,
+      next.domain,
+      next.timezone,
+      next.currency,
+      next.dodo_webhook_secret,
+      next.dodo_product_ids ?? null,
+      flagBit(next.public_stats),
+      flagBit(next.cookie_visitors),
+      site.id,
+    )
     .run();
   forgetSite(site.id);
+  await forgetPublicReads(new URL(c.req.url).origin, site.id);
   return c.json(publicSite(next));
 });
 
@@ -199,6 +209,7 @@ app.delete('/api/sites/:id', async (c) => {
     ).concat(c.env.DB.prepare('DELETE FROM sites WHERE id = ?').bind(id)),
   );
   forgetSite(id);
+  await forgetPublicReads(new URL(c.req.url).origin, id);
   return c.json({ ok: true });
 });
 

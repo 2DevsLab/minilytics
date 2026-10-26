@@ -1,7 +1,12 @@
 import type { Context } from 'hono';
+import type { PublicLive, PublicRow, PublicShare, SharePeriod } from '../shared/publicStats';
 import type { AppEnv, Site } from './env';
 import { bucketLabels, bucketSql, resolveRange, tzOffset, type Range } from './lib/time';
 import { currencyDecimals } from './payments';
+
+export const ONLINE_START_MS = 6 * 60 * 60 * 1000;
+export const ONLINE_SEEN_MS = 5 * 60 * 1000;
+export const PUBLIC_ROW_LIMIT = 10;
 
 /** Filters that live on the session row (clicking a row in the dashboard adds one of these). */
 const SESSION_FILTERS = [
@@ -155,14 +160,11 @@ export async function overview(ctx: Ctx) {
   const pb = bucketSql('p.ts', range.granularity, ctx.offset);
   const now = Date.now();
 
-  const [k1, k0, r1, r0, online, ts, tr] = await db.batch([
+  const [k1, k0, r1, r0, ts, tr] = await db.batch([
     db.prepare(KPI_SQL(cur.sql)).bind(...cur.params),
     db.prepare(KPI_SQL(prev.sql)).bind(...prev.params),
     db.prepare(REVENUE_SQL(curPay.sql)).bind(...curPay.params),
     db.prepare(REVENUE_SQL(prevPay.sql)).bind(...prevPay.params),
-    db
-      .prepare('SELECT COUNT(DISTINCT visitor_id) AS n FROM sessions WHERE site_id = ? AND started_at > ? AND last_seen_at > ?')
-      .bind(site.id, now - 6 * 3_600_000, now - 5 * 60_000),
     db
       .prepare(
         `SELECT ${sb} AS b, COUNT(DISTINCT s.visitor_id) AS visitors, COUNT(*) AS sessions, SUM(s.pageviews) AS pageviews
@@ -194,7 +196,7 @@ export async function overview(ctx: Ctx) {
     decimals: currencyDecimals(site.currency),
     current: kpis(k1.results[0] as KpiRow, r1.results[0] as RevRow),
     previous: kpis(k0.results[0] as KpiRow, r0.results[0] as RevRow),
-    online: (online.results[0] as { n: number }).n,
+    online: await countOnline(db, site.id, now),
     series,
   };
 }
@@ -446,7 +448,6 @@ export async function funnel(ctx: Ctx, steps: FunnelStep[]) {
 
 /** Everything the live globe needs: who is on the site right now, and what happened in the last 30 minutes. */
 export async function realtime(db: D1Database, site: Site, now = Date.now()) {
-  const ACTIVE_MS = 5 * 60_000;
   const FEED_MS = 30 * 60_000;
   const [visitors, events, payments] = await db.batch([
     db
@@ -459,7 +460,7 @@ export async function realtime(db: D1Database, site: Site, now = Date.now()) {
          WHERE s.site_id = ? AND s.started_at > ? AND s.last_seen_at > ?
          ORDER BY s.last_seen_at DESC LIMIT 500`,
       )
-      .bind(site.id, now - 6 * 3_600_000, now - ACTIVE_MS),
+      .bind(site.id, now - ONLINE_START_MS, now - ONLINE_SEEN_MS),
     db
       .prepare(
         `SELECT e.id, e.ts, e.type, e.name, e.path, e.visitor_id, s.country, s.lat, s.lon, v.name AS vname, v.email AS vemail
@@ -510,4 +511,85 @@ export async function realtime(db: D1Database, site: Site, now = Date.now()) {
   ].sort((a, b) => b.ts - a.ts);
 
   return { now, currency: site.currency, decimals: currencyDecimals(site.currency), domain: site.domain, visitors: active, feed };
+}
+
+export function sessionWindow(siteId: string, from: number, to: number): { sql: string; params: [string, number, number] } {
+  return { sql: 's.site_id = ? AND s.started_at >= ? AND s.started_at < ?', params: [siteId, from, to] };
+}
+
+export async function countOnline(db: D1Database, siteId: string, now: number): Promise<number> {
+  const row = await db
+    .prepare('SELECT COUNT(DISTINCT visitor_id) AS n FROM sessions WHERE site_id = ? AND started_at > ? AND last_seen_at > ?')
+    .bind(siteId, now - ONLINE_START_MS, now - ONLINE_SEEN_MS)
+    .first<{ n: number }>();
+  return Number(row?.n ?? 0);
+}
+
+async function countWindowVisitors(db: D1Database, siteId: string, from: number, to: number): Promise<number> {
+  const w = sessionWindow(siteId, from, to);
+  const row = await db
+    .prepare(`SELECT COUNT(DISTINCT s.visitor_id) AS n FROM sessions s WHERE ${w.sql}`)
+    .bind(...w.params)
+    .first<{ n: number }>();
+  return Number(row?.n ?? 0);
+}
+
+export async function loadLive(db: D1Database, site: Pick<Site, 'id' | 'timezone' | 'created_at'>, now: number): Promise<PublicLive> {
+  const today = resolveRange({ period: 'today' }, site.timezone, site.created_at, now);
+  const last24h = resolveRange({ period: '24h' }, site.timezone, site.created_at, now);
+  const [online, todayCount, lastCount] = await Promise.all([
+    countOnline(db, site.id, now),
+    countWindowVisitors(db, site.id, today.from, today.to),
+    countWindowVisitors(db, site.id, last24h.from, last24h.to),
+  ]);
+  return { online, today: todayCount, last24h: lastCount };
+}
+
+function publicRows(results: readonly { label: string | null; visitors: number; pageviews: number }[]): PublicRow[] {
+  const rows: PublicRow[] = [];
+  for (const row of results) {
+    if (!row.label) continue;
+    rows.push({ label: row.label, visitors: Number(row.visitors) || 0, pageviews: Number(row.pageviews) || 0 });
+  }
+  return rows;
+}
+
+export async function loadShare(db: D1Database, site: Pick<Site, 'id' | 'timezone' | 'created_at'>, period: SharePeriod, now: number): Promise<PublicShare> {
+  const range = resolveRange({ period }, site.timezone, site.created_at, now);
+  const w = sessionWindow(site.id, range.from, range.to);
+  const [kpi, pages, referrers, countries] = await db.batch([
+    db
+      .prepare(`SELECT COUNT(DISTINCT s.visitor_id) AS visitors, COALESCE(SUM(s.pageviews), 0) AS pageviews FROM sessions s WHERE ${w.sql}`)
+      .bind(...w.params),
+    db
+      .prepare(
+        `SELECT e.path AS label, COUNT(DISTINCT e.visitor_id) AS visitors, COUNT(*) AS pageviews
+         FROM events e WHERE e.site_id = ? AND e.type = 'pageview' AND e.ts >= ? AND e.ts < ? AND e.path IS NOT NULL
+         GROUP BY label ORDER BY visitors DESC LIMIT ${PUBLIC_ROW_LIMIT}`,
+      )
+      .bind(site.id, range.from, range.to),
+    db
+      .prepare(
+        `SELECT s.referrer_domain AS label, COUNT(DISTINCT s.visitor_id) AS visitors, COALESCE(SUM(s.pageviews), 0) AS pageviews
+         FROM sessions s WHERE ${w.sql} AND s.referrer_domain IS NOT NULL
+         GROUP BY label ORDER BY visitors DESC LIMIT ${PUBLIC_ROW_LIMIT}`,
+      )
+      .bind(...w.params),
+    db
+      .prepare(
+        `SELECT s.country AS label, COUNT(DISTINCT s.visitor_id) AS visitors, COALESCE(SUM(s.pageviews), 0) AS pageviews
+         FROM sessions s WHERE ${w.sql} AND s.country IS NOT NULL
+         GROUP BY label ORDER BY visitors DESC LIMIT ${PUBLIC_ROW_LIMIT}`,
+      )
+      .bind(...w.params),
+  ]);
+  const totals = (kpi.results[0] ?? { visitors: 0, pageviews: 0 }) as { visitors: number; pageviews: number };
+  return {
+    period,
+    visitors: Number(totals.visitors) || 0,
+    pageviews: Number(totals.pageviews) || 0,
+    pages: publicRows(pages.results as { label: string | null; visitors: number; pageviews: number }[]),
+    referrers: publicRows(referrers.results as { label: string | null; visitors: number; pageviews: number }[]),
+    countries: publicRows(countries.results as { label: string | null; visitors: number; pageviews: number }[]),
+  };
 }

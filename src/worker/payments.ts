@@ -1,5 +1,6 @@
 import type { Context } from 'hono';
-import { getSite, type AppEnv, type Site } from './env';
+import { getSite, parseSite, type AppEnv, type Site, type SiteRow } from './env';
+import { CLIENT_ID } from './policy';
 import { verifyStandardWebhook } from './lib/crypto';
 
 export function currencyDecimals(currency: string): number {
@@ -173,12 +174,7 @@ export async function recordPayment(db: D1Database, site: Site, p: PaymentInput)
   ];
   // A payment tells us who an anonymous visitor really is.
   if (visitorId && p.kind === 'payment' && (p.email || p.name)) {
-    stmts.push(
-      db.prepare('INSERT OR IGNORE INTO visitors (site_id, id, first_seen) VALUES (?, ?, ?)').bind(site.id, visitorId, p.ts),
-      db
-        .prepare('UPDATE visitors SET email = COALESCE(email, ?), name = COALESCE(name, ?) WHERE site_id = ? AND id = ?')
-        .bind(p.email ?? null, p.name ?? null, site.id, visitorId),
-    );
+    stmts.push(...fillVisitorStmts(db, site.id, visitorId, p.ts, { kind: 'values', userId: null, email: p.email ?? null, name: p.name ?? null }));
   }
   await db.batch(stmts);
   return { visitorId, sessionId };
@@ -212,10 +208,7 @@ export async function rematchPayments(db: D1Database, site: Site) {
       db
         .prepare('UPDATE payments SET visitor_id = ?, session_id = ?, matched_by = ?, renewal = ? WHERE site_id = ? AND id = ?')
         .bind(a.visitorId, a.sessionId, a.matchedBy, a.renewal ? 1 : 0, site.id, r.id),
-      db.prepare('INSERT OR IGNORE INTO visitors (site_id, id, first_seen) VALUES (?, ?, ?)').bind(site.id, a.visitorId, r.ts),
-      db
-        .prepare('UPDATE visitors SET email = COALESCE(email, ?), name = COALESCE(name, ?) WHERE site_id = ? AND id = ?')
-        .bind(r.email, r.name, site.id, a.visitorId),
+      ...fillVisitorStmts(db, site.id, a.visitorId, r.ts, { kind: 'values', userId: null, email: r.email, name: r.name }),
     ]);
   }
   return { checked: rows.results.length, matched, details };
@@ -313,7 +306,64 @@ export async function handleDodoWebhook(c: Context<AppEnv>) {
 async function siteFromApiKey(c: Context<AppEnv>): Promise<Site | null> {
   const key = c.req.header('authorization')?.replace(/^Bearer\s+/i, '');
   if (!key) return null;
-  return c.env.DB.prepare('SELECT * FROM sites WHERE api_key = ?').bind(key).first<Site>();
+  const row = await c.env.DB.prepare('SELECT * FROM sites WHERE api_key = ?').bind(key).first<SiteRow>();
+  return row ? parseSite(row) : null;
+}
+
+function clipIdentity(value: string | null, max: number): string | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed.slice(0, max) : null;
+}
+
+export type IdentityFill =
+  | { kind: 'values'; userId: string | null; email: string | null; name: string | null }
+  | { kind: 'payment'; paymentId: string };
+
+export function fillVisitorStmts(
+  db: D1Database,
+  siteId: string,
+  visitorId: string,
+  now: number,
+  fill: IdentityFill,
+): D1PreparedStatement[] {
+  const insert = db.prepare('INSERT OR IGNORE INTO visitors (site_id, id, first_seen) VALUES (?, ?, ?)').bind(siteId, visitorId, now);
+  if (fill.kind === 'payment') {
+    return [
+      insert,
+      db
+        .prepare(
+          `UPDATE visitors SET user_id = COALESCE(user_id, ?),
+             email = COALESCE(email, (SELECT email FROM payments WHERE site_id = ? AND (id = ? OR subscription_id = ?) LIMIT 1)),
+             name = COALESCE(name, (SELECT name FROM payments WHERE site_id = ? AND (id = ? OR subscription_id = ?) LIMIT 1))
+           WHERE site_id = ? AND id = ?`,
+        )
+        .bind(null, siteId, fill.paymentId, fill.paymentId, siteId, fill.paymentId, fill.paymentId, siteId, visitorId),
+    ];
+  }
+  const userId = clipIdentity(fill.userId, 128);
+  const email = clipIdentity(fill.email, 200)?.toLowerCase() ?? null;
+  const name = clipIdentity(fill.name, 128);
+  return [
+    insert,
+    db
+      .prepare('UPDATE visitors SET user_id = COALESCE(user_id, ?), email = COALESCE(email, ?), name = COALESCE(name, ?) WHERE site_id = ? AND id = ?')
+      .bind(userId, email, name, siteId, visitorId),
+  ];
+}
+
+export async function handleIdentify(c: Context<AppEnv>) {
+  const site = await siteFromApiKey(c);
+  if (!site) return c.json({ error: 'invalid api key' }, 401);
+  const b = await c.req.json<Record<string, unknown>>().catch(() => null);
+  const visitorId = typeof b?.visitor_id === 'string' ? b.visitor_id : '';
+  if (!CLIENT_ID.test(visitorId)) return c.json({ error: 'visitor_id is required' }, 400);
+  const userId = clipIdentity(typeof b?.user_id === 'string' ? b.user_id : null, 128);
+  const email = clipIdentity(typeof b?.email === 'string' ? b.email : null, 200)?.toLowerCase() ?? null;
+  const name = clipIdentity(typeof b?.name === 'string' ? b.name : null, 128);
+  if (!userId && !email && !name) return c.json({ error: 'email, name, or user_id is required' }, 400);
+  await c.env.DB.batch(fillVisitorStmts(c.env.DB, site.id, visitorId, Date.now(), { kind: 'values', userId, email, name }));
+  return c.json({ ok: true });
 }
 
 /**

@@ -1,8 +1,11 @@
 import { createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { classify } from '../src/shared/sources';
-import { belongsTo, normalizePath } from '../src/worker/collect';
+import { normalizePath } from '../src/worker/collect';
+import { belongsTo } from '../src/worker/policy';
 import { verifyStandardWebhook } from '../src/worker/lib/crypto';
+import { createSiteTimezone, DEFAULT_SITE_TIMEZONE } from '../src/shared/siteDefaults';
+import { parseSite } from '../src/worker/env';
 import { bucketLabels, resolveRange, startOfDay, tzOffset } from '../src/worker/lib/time';
 import { isBot, parseUA } from '../src/worker/lib/ua';
 
@@ -70,6 +73,10 @@ describe('time ranges', () => {
     expect(r.from).toBe(Date.UTC(2026, 9, 22, 18, 30));
     expect(r.granularity).toBe('hour');
   });
+  it('starts "today" at Prague midnight', () => {
+    const r = resolveRange({ period: 'today' }, 'Europe/Prague', 0, now);
+    expect(r.from).toBe(Date.UTC(2026, 9, 22, 22, 0));
+  });
   it('last 30 days covers 30 local days', () => {
     const r = resolveRange({ period: '30d' }, 'UTC', 0, now);
     expect(r.from).toBe(startOfDay(now, 'UTC') - 29 * 86_400_000);
@@ -82,6 +89,32 @@ describe('time ranges', () => {
   it('weekly buckets start on Monday', () => {
     const r = resolveRange({ period: '30d', granularity: 'week' }, 'UTC', 0, now);
     for (const l of bucketLabels(r, 0)) expect(new Date(l + 'T00:00:00Z').getUTCDay()).toBe(1);
+  });
+});
+
+describe('site flags and new-site timezone', () => {
+  const row = {
+    id: 'site',
+    name: 'Site',
+    domain: 'example.com',
+    timezone: 'UTC',
+    currency: 'USD',
+    api_key: 'ml_x',
+    dodo_webhook_secret: null,
+    created_at: 1,
+  };
+  it('turns only 1 and true on', () => {
+    expect(parseSite({ ...row, public_stats: 1, cookie_visitors: true }).public_stats).toBe(true);
+    expect(parseSite({ ...row, public_stats: 1, cookie_visitors: true }).cookie_visitors).toBe(true);
+    expect(parseSite({ ...row, public_stats: 0, cookie_visitors: 0 }).public_stats).toBe(false);
+    expect(parseSite(row).public_stats).toBe(false);
+    expect(parseSite({ ...row, public_stats: 2, cookie_visitors: false }).cookie_visitors).toBe(false);
+  });
+  it('uses Europe/Prague when the requested zone is missing or invalid', () => {
+    expect(DEFAULT_SITE_TIMEZONE).toBe('Europe/Prague');
+    expect(createSiteTimezone(undefined, () => true)).toBe('Europe/Prague');
+    expect(createSiteTimezone('Not/AZone', () => false)).toBe('Europe/Prague');
+    expect(createSiteTimezone('Asia/Kolkata', () => true)).toBe('Asia/Kolkata');
   });
 });
 
