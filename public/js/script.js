@@ -6,6 +6,7 @@
   if (!script) return;
 
   var siteId = script.getAttribute('data-website-id');
+  var useCookie = script.getAttribute('data-cookie') === 'true';
   var endpoint = script.getAttribute('data-api') || new URL(script.src).origin + '/api/event';
   var allowLocal = script.hasAttribute('data-allow-localhost');
   var cookieDomain = script.getAttribute('data-domain');
@@ -48,7 +49,7 @@
     }
     return null;
   }
-  var domain = rootDomain();
+  var domain = useCookie ? rootDomain() : null;
   function writeCookie(name, value, maxAge) {
     d.cookie = name + '=' + encodeURIComponent(value) + '; path=/; max-age=' + maxAge + '; SameSite=Lax' +
       (domain ? '; domain=' + domain : '') + (loc.protocol === 'https:' ? '; Secure' : '');
@@ -81,8 +82,13 @@
     } catch (e) { return href; }
   }
   function send(type, extra, beacon) {
-    var id = ids();
-    var body = { w: siteId, t: type, u: cleanUrl(loc.href), vid: id.vid, sid: id.sid, sw: w.screen ? screen.width : 0 };
+    var body = { w: siteId, t: type, u: cleanUrl(loc.href), sw: w.screen ? screen.width : 0 };
+    if (useCookie) {
+      var id = ids();
+      body.vid = id.vid;
+      body.sid = id.sid;
+      body.ck = 1;
+    }
     for (var k in extra) if (extra[k] !== undefined) body[k] = extra[k];
     var json = JSON.stringify(body);
     // text/plain keeps this a "simple" request: no CORS preflight, works with sendBeacon.
@@ -136,6 +142,7 @@
     send('goal', { n: String(name).slice(0, 64), p: props || undefined }, true);
   }
   function attribution() {
+    if (!useCookie) return {};
     var id = ids();
     return { ml_visitor_id: id.vid, ml_session_id: id.sid };
   }
@@ -143,6 +150,7 @@
   // not just on click, because other scripts (e.g. Umami's click tracking) may copy the href and navigate
   // before our click handler runs.
   function tagDodoLink(a) {
+    if (!useCookie) return;
     try {
       var u = new URL(a.href);
       if (!/(^|\.)dodopayments\.com$/.test(u.hostname)) return;
@@ -163,18 +171,20 @@
     tagQueued = true;
     setTimeout(function () { tagQueued = false; tagDodoLinks(); }, 50);
   }
-  if (w.MutationObserver) {
-    new MutationObserver(queueTag).observe(d.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['href'] });
-  }
-  if (d.readyState === 'loading') d.addEventListener('DOMContentLoaded', tagDodoLinks);
-  else tagDodoLinks();
-  // Refresh right before a click starts, in case the session id rotated while the page sat idle.
   function onPress(e) {
     var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
     if (a) tagDodoLink(a);
   }
-  d.addEventListener('pointerdown', onPress, true);
-  d.addEventListener('keydown', function (e) { if (e.key === 'Enter') onPress(e); }, true);
+  if (useCookie) {
+    if (w.MutationObserver) {
+      new MutationObserver(queueTag).observe(d.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['href'] });
+    }
+    if (d.readyState === 'loading') d.addEventListener('DOMContentLoaded', tagDodoLinks);
+    else tagDodoLinks();
+    // Refresh right before a click starts, in case the session id rotated while the page sat idle.
+    d.addEventListener('pointerdown', onPress, true);
+    d.addEventListener('keydown', function (e) { if (e.key === 'Enter') onPress(e); }, true);
+  }
   function onClick(e) {
     var el = e.target && e.target.closest ? e.target : null;
     if (!el) return;
@@ -204,7 +214,7 @@
   // ---- public API
   function api(cmd, a, b) {
     if (cmd === 'goal' || cmd === 'track') goal(a, b);
-    else if (cmd === 'identify' && a) send('identify', { p: { user_id: a.user_id || a.id, email: a.email, name: a.name } });
+    else if (cmd === 'identify') return;
     else if (cmd === 'pageview') { lastPage = null; pageview(); }
   }
   api.attribution = attribution;

@@ -216,7 +216,7 @@ const session = await dodo.checkoutSessions.create({
             </p>
             <p className="mt-2 text-stone-500">
               If metadata is missing, Minilytics still links the payment when the buyer lands back on your site, when their email matches a
-              visitor you <code>identify()</code>, when it's a renewal of an earlier payment, or when exactly one visitor clicked a checkout link
+              visitor you identified from your server, when it's a renewal of an earlier payment, or when exactly one visitor clicked a checkout link
               shortly before paying. The Journey tab shows how each payment was matched.
             </p>
           </li>
