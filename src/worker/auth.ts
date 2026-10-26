@@ -1,7 +1,8 @@
 import type { Context, Next } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import type { AppEnv, Env, Site } from './env';
-import { randomId, signToken, verifyToken } from './lib/crypto';
+import { passwordMatches, randomId, signToken, verifyToken } from './lib/crypto';
+import { clientIp } from './policy';
 
 /**
  * Two modes:
@@ -65,6 +66,33 @@ export function planActive(status: string | null | undefined, until: number | nu
 export function siteOwnerActive(env: Env, site: Site & { owner_email?: string | null; owner_plan_status?: string | null; owner_plan_until?: number | null }) {
   if (!isHosted(env) || !site.owner_id) return true;
   return isAdminEmail(env, site.owner_email) || planActive(site.owner_plan_status, site.owner_plan_until);
+}
+
+export const LOGIN_MAX_FAILURES = 10;
+export const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+
+export async function login(c: Context<AppEnv>) {
+  if (isHosted(c.env)) return c.json({ error: 'Use "Continue with Google".' }, 400);
+  if (!c.env.ADMIN_PASSWORD || !c.env.SESSION_SECRET) {
+    return c.json({ error: 'Set ADMIN_PASSWORD and SESSION_SECRET (see README).' }, 500);
+  }
+  const { password } = await c.req.json<{ password?: string }>().catch(() => ({ password: undefined }));
+  const ip = clientIp(c.req.raw) ?? 'unknown';
+  const now = Date.now();
+  const counted = await c.env.DB.batch([
+    c.env.DB.prepare('DELETE FROM login_failures WHERE ts < ?').bind(now - LOGIN_WINDOW_MS),
+    c.env.DB.prepare('INSERT INTO login_failures (ip, ts) VALUES (?, ?)').bind(ip, now),
+    c.env.DB.prepare('SELECT COUNT(*) AS n FROM login_failures WHERE ip = ? AND ts > ?').bind(ip, now - LOGIN_WINDOW_MS),
+  ]);
+  const n = Number((counted[2]?.results?.[0] as { n: number } | undefined)?.n ?? 0);
+  if (n > LOGIN_MAX_FAILURES) return c.json({ error: 'Too many wrong attempts. Try again in 15 minutes.' }, 429);
+  if (!password || !(await passwordMatches(c.env.ADMIN_PASSWORD, password))) {
+    await new Promise((r) => setTimeout(r, 500));
+    return c.json({ error: 'Wrong password' }, 401);
+  }
+  await c.env.DB.prepare('DELETE FROM login_failures WHERE ip = ?').bind(ip).run();
+  await setSession(c, 'admin');
+  return c.json({ ok: true });
 }
 
 export async function setSession(c: Context<AppEnv>, subject: string) {

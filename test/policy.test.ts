@@ -1,6 +1,18 @@
-import { createHmac } from 'node:crypto'
+import { createHmac, pbkdf2Sync, randomBytes, timingSafeEqual as nodeTimingSafeEqual } from 'node:crypto'
+
+const subtle = globalThis.crypto.subtle as SubtleCrypto & {
+  timingSafeEqual?: (left: BufferSource, right: BufferSource) => boolean
+}
+if (typeof subtle.timingSafeEqual !== 'function') {
+  subtle.timingSafeEqual = (left, right) => {
+    const view = (source: BufferSource) =>
+      source instanceof ArrayBuffer ? new Uint8Array(source) : new Uint8Array(source.buffer, source.byteOffset, source.byteLength)
+    return nodeTimingSafeEqual(view(left), view(right))
+  }
+}
 import { describe, expect, it } from 'vitest'
 import { startOfDay } from '../src/worker/lib/time'
+import { passwordMatches } from '../src/worker/lib/crypto'
 import { decideIngest, requestGeo, visitorSalt, type IngestFacts } from '../src/worker/policy'
 
 const now = Date.UTC(2026, 9, 23, 12, 0)
@@ -116,6 +128,24 @@ describe('decideIngest', () => {
   it('requires an IP and a salt for the cookieless hash', async () => {
     expect(await decideIngest(facts({ ip: null }))).toMatchObject({ ok: false, status: 403, reason: 'client-ip' })
     expect(await decideIngest(facts({ salt: null }))).toMatchObject({ ok: false, status: 503, reason: 'salt' })
+  })
+})
+
+describe('passwordMatches', () => {
+  it('compares plaintext passwords by digest', async () => {
+    expect(await passwordMatches('secret', 'secret')).toBe(true)
+    expect(await passwordMatches('secret', 'secret2')).toBe(false)
+    expect(await passwordMatches('a', 'ab')).toBe(false)
+  })
+
+  it('verifies a PBKDF2 string and does not treat a broken string as plaintext', async () => {
+    const salt = randomBytes(16)
+    const hash = pbkdf2Sync('correct horse', salt, 1_000, 32, 'sha256')
+    const phc = `$pbkdf2-sha256$i=1000$${salt.toString('base64')}$${hash.toString('base64')}`
+    expect(await passwordMatches(phc, 'correct horse')).toBe(true)
+    expect(await passwordMatches(phc, 'wrong')).toBe(false)
+    expect(await passwordMatches('$pbkdf2-sha256$nope', '$pbkdf2-sha256$nope')).toBe(false)
+    expect(await passwordMatches('$pbkdf2-sha256$i=9000000$aa$bb', 'x')).toBe(false)
   })
 })
 

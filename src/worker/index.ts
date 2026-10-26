@@ -2,16 +2,14 @@ import { Hono, type Context, type Next } from 'hono';
 import { cors } from 'hono/cors';
 import { handleEvent } from './collect';
 import { flagBit, forgetSite, parseSite, type AppEnv, type Site, type SiteRow } from './env';
-import { clearSession, currentUser, googleCallback, googleStart, isHosted, requireUser, setSession, siteAccessSql } from './auth';
+import { clearSession, currentUser, googleCallback, googleStart, isHosted, login, requireUser, siteAccessSql } from './auth';
 import { billingWebhook, checkout, planInfo } from './billing';
-import { passwordsMatch, randomId } from './lib/crypto';
+import { randomId } from './lib/crypto';
 import { createSiteTimezone } from '../shared/siteDefaults';
 import { handleDodoWebhook, handleGoalApi, handleIdentify, handlePaymentApi, rematchPayments } from './payments';
 import { breakdown, customers, funnel, makeCtx, overview, realtime, visitorProfile, visitors, type FunnelStep } from './stats';
 
 const app = new Hono<AppEnv>();
-const MAX_FAILURES = 10;
-const LOCKOUT_MS = 15 * 60_000;
 
 // ---------- public: tracking, webhooks, server-side API
 
@@ -24,33 +22,7 @@ app.post('/api/v1/identify', handleIdentify);
 
 // ---------- login
 
-app.post('/api/auth/login', async (c) => {
-  if (isHosted(c.env)) return c.json({ error: 'Use "Continue with Google".' }, 400);
-  if (!c.env.ADMIN_PASSWORD || !c.env.SESSION_SECRET) {
-    return c.json({ error: 'Set ADMIN_PASSWORD and SESSION_SECRET (see README).' }, 500);
-  }
-  // Lock an IP out after too many wrong passwords, so a public dashboard can't be brute-forced.
-  const ip = c.req.header('cf-connecting-ip') ?? 'unknown';
-  const now = Date.now();
-  const recent = await c.env.DB.prepare('SELECT COUNT(*) AS n FROM login_failures WHERE ip = ? AND ts > ?')
-    .bind(ip, now - LOCKOUT_MS)
-    .first<{ n: number }>();
-  if ((recent?.n ?? 0) >= MAX_FAILURES) {
-    return c.json({ error: 'Too many wrong attempts. Try again in 15 minutes.' }, 429);
-  }
-  const { password } = await c.req.json<{ password?: string }>().catch(() => ({ password: undefined }));
-  if (!password || !passwordsMatch(password, c.env.ADMIN_PASSWORD)) {
-    await c.env.DB.batch([
-      c.env.DB.prepare('INSERT INTO login_failures (ip, ts) VALUES (?, ?)').bind(ip, now),
-      c.env.DB.prepare('DELETE FROM login_failures WHERE ts < ?').bind(now - LOCKOUT_MS),
-    ]);
-    await new Promise((r) => setTimeout(r, 500));
-    return c.json({ error: 'Wrong password' }, 401);
-  }
-  await c.env.DB.prepare('DELETE FROM login_failures WHERE ip = ?').bind(ip).run();
-  await setSession(c, 'admin');
-  return c.json({ ok: true });
-});
+app.post('/api/auth/login', login);
 
 app.get('/api/auth/google', googleStart);
 app.get('/api/auth/google/callback', googleCallback);
