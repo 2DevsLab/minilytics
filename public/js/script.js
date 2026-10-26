@@ -184,7 +184,6 @@
     }
     if (d.readyState === 'loading') d.addEventListener('DOMContentLoaded', tagDodoLinks);
     else tagDodoLinks();
-    // Refresh right before a click starts, in case the session id rotated while the page sat idle.
     d.addEventListener('pointerdown', onPress, true);
     d.addEventListener('keydown', function (e) { if (e.key === 'Enter') onPress(e); }, true);
   }

@@ -47,9 +47,7 @@ async function publishUsed(scope: string, id: string, windowStart: number, used:
       markUrl(scope, await cacheActor(scope, id), windowStart),
       new Response(JSON.stringify({ used }), { headers: { 'cache-control': 'max-age=60' } }),
     )
-  } catch {
-    // The cached count is a hint. A cache miss still leaves the local bucket in place.
-  }
+  } catch {}
 }
 
 function bucket(key: string, windowStart: number, ceiling: number): Bucket {

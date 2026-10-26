@@ -23,13 +23,9 @@ export interface Env {
   PLAN_SPOTS?: string; // spots at this price, e.g. "5"
   PLAN_NEXT_PRICE?: string; // shown as "then $49" next to the spots counter
   SUPPORT_EMAIL?: string;
-  /** Salt for cookieless visitor ids. Falls back to SESSION_SECRET. */
   VISITOR_SALT?: string;
-  /** Team name for self-hosted Cloudflare Access. Ignored in hosted mode. */
   CF_ACCESS_TEAM_DOMAIN?: string;
-  /** Access application audience (AUD). Both Access vars must be set. */
   CF_ACCESS_AUD?: string;
-  /** Optional pair. Used only when INGEST_SITE is also bound. */
   INGEST_IP?: IngestLimiter;
   INGEST_SITE?: IngestLimiter;
 }
@@ -38,7 +34,6 @@ export interface IngestLimiter {
   limit(options: { key: string }): Promise<{ success: boolean }>;
 }
 
-/** D1 row. Flag columns are 0/1. Handlers hold `Site` after `parseSite`. */
 export interface SiteRow {
   id: string;
   name: string;
@@ -82,7 +77,6 @@ export type AppEnv = { Bindings: Env; Variables: { site: Site; user: import('./a
 
 const siteCache = new Map<string, { site: SiteWithOwner | null; at: number }>();
 
-/** 1 and true are on. Every other value, including a missing column, is off. */
 export function flagOn(value: number | boolean | null | undefined): boolean {
   return value === 1 || value === true;
 }

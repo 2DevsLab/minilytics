@@ -7,7 +7,6 @@ import { loadLive, loadShare } from './stats';
 const PUBLIC_CACHE = 'public, s-maxage=60, stale-while-revalidate=300';
 
 function workerCache(): Cache {
-  // DOM CacheStorage hides the Workers `caches.default` binding.
   return (caches as unknown as { default: Cache }).default;
 }
 
@@ -71,9 +70,7 @@ async function handleLiveOptions(c: Context<AppEnv>): Promise<Response> {
         headers.set('access-control-allow-origin', origin);
         headers.set('access-control-allow-methods', 'GET, OPTIONS');
       }
-    } catch {
-      // Leave the preflight without an allow-origin header.
-    }
+    } catch {}
   }
   return new Response(null, { status: 204, headers });
 }

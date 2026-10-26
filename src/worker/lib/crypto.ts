@@ -76,7 +76,6 @@ const PBKDF2 = /^\$pbkdf2-sha256\$i=(\d+)\$([^$]+)\$([^$]+)$/;
 const PBKDF2_MAX_ITERATIONS = 2_000_000;
 
 function timingSafeEqual(left: BufferSource, right: BufferSource): boolean {
-  // workers-types does not list this method yet. workerd and Node both implement it.
   const subtle = crypto.subtle as SubtleCrypto & { timingSafeEqual(a: BufferSource, b: BufferSource): boolean };
   return subtle.timingSafeEqual(left, right);
 }

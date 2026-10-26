@@ -156,9 +156,7 @@ async function accessKeys(base: string, refresh: boolean): Promise<Map<string, C
         jwk.kid,
         await crypto.subtle.importKey('jwk', { kty: 'RSA', n: jwk.n, e: jwk.e, alg: 'RS256', ext: true }, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify']),
       );
-    } catch {
-      // A key this runtime cannot import is skipped. Another kid may still match.
-    }
+    } catch {}
   }
   accessCerts.set(base, { at: Date.now(), keys });
   return keys;
