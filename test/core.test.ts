@@ -1,7 +1,8 @@
 import { createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { classify } from '../src/shared/sources';
-import { belongsTo, normalizePath } from '../src/worker/collect';
+import { normalizePath } from '../src/worker/collect';
+import { belongsTo } from '../src/worker/policy';
 import { verifyStandardWebhook } from '../src/worker/lib/crypto';
 import { createSiteTimezone, DEFAULT_SITE_TIMEZONE } from '../src/shared/siteDefaults';
 import { parseSite } from '../src/worker/env';

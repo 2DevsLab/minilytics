@@ -4,6 +4,7 @@ import { siteOwnerActive } from './auth';
 import { getSite, type AppEnv, type Site } from './env';
 import { isBot, parseUA } from './lib/ua';
 import { creditedSessionSql } from './payments';
+import { belongsTo, type Geo } from './policy';
 
 const TYPES = new Set(['pageview', 'goal', 'outbound', 'ping', 'identify']);
 const MAX_PING_MS = 10 * 60_000;
@@ -39,13 +40,6 @@ function stripWww(h: string) {
   return h.replace(/^www\./, '').toLowerCase();
 }
 
-/** Is `hostname` the site's domain or one of its subdomains? */
-export function belongsTo(hostname: string, domain: string): boolean {
-  const h = stripWww(hostname);
-  const d = stripWww(domain);
-  return h === d || h.endsWith('.' + d);
-}
-
 export async function handleEvent(c: Context<AppEnv>) {
   const raw = await c.req.text();
   if (raw.length > 8192) return c.body(null, 413);
@@ -76,14 +70,6 @@ export async function handleEvent(c: Context<AppEnv>) {
 
   await ingest(c.env.DB, site, body, url, ua, geoOf(c), Date.now());
   return c.body(null, 202);
-}
-
-export interface Geo {
-  country: string | null;
-  region: string | null;
-  city: string | null;
-  lat: number | null;
-  lon: number | null;
 }
 
 /** City-level coordinates, rounded to 2 decimals (~1 km) so no precise location is ever stored. */
