@@ -1,5 +1,6 @@
 import type { Context } from 'hono';
 import { classify } from '../shared/sources';
+import { siteOwnerActive } from './auth';
 import { getSite, type AppEnv, type Site } from './env';
 import { isBot, parseUA } from './lib/ua';
 import { creditedSessionSql } from './payments';
@@ -61,6 +62,8 @@ export async function handleEvent(c: Context<AppEnv>) {
 
   const site = await getSite(c.env.DB, body.w);
   if (!site) return c.body(null, 404);
+  // Hosted mode: stop recording when the owner's plan has ended (quietly, so their site never shows errors).
+  if (!siteOwnerActive(c.env, site)) return c.body(null, 202);
 
   let url: URL;
   try {

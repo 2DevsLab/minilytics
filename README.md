@@ -117,6 +117,30 @@ npm run deploy
 
 At 5–10k visitors a month you'll use a few percent of this. If you outgrow it, Cloudflare's Workers Paid plan is $5/month.
 
+## Run it as a hosted SaaS (optional)
+
+By default Minilytics is single-user with a password. Set the Google values below and it becomes a hosted product:
+a landing page with pricing, **Sign in with Google**, a paid plan through Dodo Payments, and every customer sees only
+their own sites. Tracking stops (quietly) for sites whose owner's plan has ended.
+
+```bash
+npx wrangler secret put GOOGLE_CLIENT_ID        # Google Cloud → Credentials → OAuth client (Web)
+npx wrangler secret put GOOGLE_CLIENT_SECRET    # redirect URI: https://YOUR-DOMAIN/api/auth/google/callback
+npx wrangler secret put ADMIN_EMAILS            # your Google email(s): free, and you keep the existing sites
+npx wrangler secret put PLAN_CHECKOUT_URL       # Dodo payment link for the plan
+npx wrangler secret put PLAN_PRODUCT_ID         # that product's id (pdt_...)
+npx wrangler secret put BILLING_WEBHOOK_SECRET  # Dodo webhook → https://YOUR-DOMAIN/api/billing/webhook
+npx wrangler secret put PLAN_PRICE              # e.g. $9
+npx wrangler secret put PLAN_INTERVAL           # month | year | lifetime
+npx wrangler secret put PLAN_SPOTS              # e.g. 50 ("x of 50 founding spots left"); optional
+npx wrangler secret put SUPPORT_EMAIL           # shown on pricing, billing and legal pages
+npm run deploy
+```
+
+Subscribe the billing webhook to `payment.succeeded`, `subscription.*` and `refund.succeeded`. A one-time product
+(`PLAN_INTERVAL=lifetime`) gives lifetime access; a subscription gives access until it expires or is refunded.
+The Terms, Privacy and Refund pages (`/terms`, `/privacy`, `/refund`) are plain-language starting points: review them.
+
 ## Install on a website
 
 ```html
@@ -200,6 +224,7 @@ npm run dev:web                       # optional: hot-reloading dashboard on htt
 npm run seed                          # optional: 30 days of demo data ("ShipKit" site)
 npm test                              # unit tests
 npm run smoke                         # end-to-end test against the running dev server
+node scripts/smoke-hosted.mjs         # hosted-mode test (see the comment at the top for how to start it)
 ```
 
 ## How it's built

@@ -253,6 +253,13 @@ export async function handleDodoWebhook(c: Context<AppEnv>) {
   const meta = { ...(customer.metadata as object), ...(data.metadata as object) } as Record<string, unknown>;
   const ts = Date.parse(data.created_at ?? event.timestamp ?? '') || Date.now();
 
+  // One Dodo account may sell several products; count only the ones that belong to this site.
+  const allowed = (site.dodo_product_ids ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+  if (allowed.length && event.type === 'payment.succeeded') {
+    const products = Array.isArray(data.product_cart) ? data.product_cart.map((p: any) => p?.product_id) : [];
+    if (!products.some((id: string) => allowed.includes(id))) return c.json({ ok: true, ignored: 'other product' });
+  }
+
   if (event.type === 'payment.succeeded') {
     let amount = Number(data.total_amount) || 0;
     let currency = String(data.currency ?? site.currency);
@@ -278,7 +285,9 @@ export async function handleDodoWebhook(c: Context<AppEnv>) {
     const original = await c.env.DB.prepare('SELECT * FROM payments WHERE id = ? AND site_id = ?')
       .bind(String(data.payment_id), site.id)
       .first<{ visitor_id: string | null; session_id: string | null; currency: string; amount: number }>();
-    const amount = Number(data.amount) || original?.amount || 0;
+    // A refund of a payment this site never recorded (another product, or before tracking) isn't this site's.
+    if (!original) return c.json({ ok: true, ignored: 'unknown payment' });
+    const amount = Number(data.amount) || original.amount || 0;
     await c.env.DB.prepare(
       `INSERT OR IGNORE INTO payments (id, site_id, provider, ts, amount, kind, currency, visitor_id, session_id, customer_id, email, name)
        VALUES (?, ?, 'dodo', ?, ?, 'refund', ?, ?, ?, ?, ?, ?)`,
@@ -288,9 +297,9 @@ export async function handleDodoWebhook(c: Context<AppEnv>) {
         site.id,
         ts,
         -Math.abs(amount),
-        String(data.currency ?? original?.currency ?? site.currency).toUpperCase(),
-        original?.visitor_id ?? null,
-        original?.session_id ?? null,
+        String(data.currency ?? original.currency ?? site.currency).toUpperCase(),
+        original.visitor_id ?? null,
+        original.session_id ?? null,
         str(customer.customer_id),
         str(customer.email)?.toLowerCase() ?? null,
         str(customer.name),

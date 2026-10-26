@@ -43,7 +43,14 @@ export function Settings({ siteId }: { siteId: string }) {
   useEffect(() => {
     api<Site>(`/api/sites/${siteId}`).then((s) => {
       setSite(s);
-      setForm({ name: s.name, domain: s.domain, timezone: s.timezone, currency: s.currency, dodo_webhook_secret: s.dodo_webhook_secret ?? '' });
+      setForm({
+        name: s.name,
+        domain: s.domain,
+        timezone: s.timezone,
+        currency: s.currency,
+        dodo_webhook_secret: s.dodo_webhook_secret ?? '',
+        dodo_product_ids: s.dodo_product_ids ?? '',
+      });
     });
   }, [siteId]);
 
@@ -158,6 +165,21 @@ async rewrites() {
             {site.dodo_webhook_secret && <p className="mt-1 text-xs text-emerald-600">✓ Secret configured</p>}
           </li>
           <li>
+            <b>Selling more than one product from the same Dodo account?</b> Dodo sends every payment to every webhook, so list this
+            site's product ids (from Dodo → Products) to count only those. Leave empty if this account only sells this site's products.
+            <div className="mt-2 flex gap-2">
+              <input
+                className="input font-mono"
+                placeholder="pdt_abc123, pdt_def456"
+                value={form.dodo_product_ids ?? ''}
+                onChange={(e) => setForm({ ...form, dodo_product_ids: e.target.value })}
+              />
+              <button className="btn-dark" onClick={() => save({ dodo_product_ids: form.dodo_product_ids ?? '' }, 'Products saved')}>
+                Save
+              </button>
+            </div>
+          </li>
+          <li>
             Pass the visitor cookies as metadata when you create a checkout (this is what makes attribution exact):
             <div className="mt-2">
               <Code>{`import DodoPayments from 'dodopayments';
@@ -177,7 +199,7 @@ const session = await dodo.checkoutSessions.create({
             </div>
             <p className="mt-2 text-stone-500">
               Using Dodo <b>payment links</b> (checkout.dodopayments.com/buy/…) instead? The script adds the metadata to those links
-              automatically when clicked, but it doesn't always reach the payment, so also set the return URL (step 4). In the browser you can also read the ids with <code>window.minilytics.attribution()</code>.
+              automatically when clicked, but it doesn't always reach the payment, so also set the return URL (last step below). In the browser you can also read the ids with <code>window.minilytics.attribution()</code>.
             </p>
             <p className="mt-2 text-stone-500">
               If metadata is missing, Minilytics still links the payment when the buyer lands back on your site, when their email matches a
