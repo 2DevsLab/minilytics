@@ -146,10 +146,18 @@ describe('routes', () => {
       body: JSON.stringify({ domain: 'live.example', name: 'Live' }),
     })
     const liveSite = await read<{ id: string }>(created)
-    const hidden = await harness.fetch(`http://example.com/api/public/${liveSite.id}/live`)
+    const hidden = await harness.fetch(`http://example.com/api/public/${liveSite.id}/live`, {
+      headers: { origin: 'https://live.example' },
+    })
     expect(hidden.status).toBe(404)
     expect(hidden.headers.get('cache-control')).toBe('no-store')
+    expect(hidden.headers.get('access-control-allow-origin')).toBe('https://live.example')
     expect(await read(hidden)).toEqual({ error: 'not found' })
+    const missing = await harness.fetch('http://example.com/api/public/missing-site/live', {
+      headers: { origin: 'https://live.example' },
+    })
+    expect(missing.status).toBe(404)
+    expect(missing.headers.get('access-control-allow-origin')).toBeNull()
     const hiddenShare = await harness.fetch(`http://example.com/api/public/${liveSite.id}/share`)
     expect(hiddenShare.status).toBe(404)
     expect(await read(hiddenShare)).toEqual({ error: 'not found' })

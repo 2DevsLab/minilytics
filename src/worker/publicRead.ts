@@ -80,7 +80,9 @@ async function handleLiveOptions(c: Context<AppEnv>): Promise<Response> {
 
 async function handlePublicGet(c: Context<AppEnv>, kind: 'live' | 'share'): Promise<Response> {
   const site = await loadPublicSite(c.env.DB, c.req.param('siteId')!);
-  if (!site || !publicStatsOn(site)) return notFound();
+  const origin = c.req.header('origin') ?? null;
+  if (!site) return notFound();
+  if (!publicStatsOn(site)) return applyPublicCors(notFound(), origin, site.domain);
   const url = new URL(c.req.url);
   let period: SharePeriod = DEFAULT_SHARE_PERIOD;
   if (kind === 'share') {
@@ -91,7 +93,6 @@ async function handlePublicGet(c: Context<AppEnv>, kind: 'live' | 'share'): Prom
   const cache = workerCache();
   const cacheKey = new Request(url.toString());
   const hit = await cache.match(cacheKey);
-  const origin = c.req.header('origin') ?? null;
   if (hit) return applyPublicCors(hit, origin, site.domain);
   const now = Date.now();
   const body = kind === 'live' ? await loadLive(c.env.DB, site, now) : await loadShare(c.env.DB, site, period, now);
