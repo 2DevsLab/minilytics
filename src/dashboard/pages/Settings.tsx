@@ -67,7 +67,8 @@ export function Settings({ siteId }: { siteId: string }) {
   }
 
   if (!site) return null;
-  const snippet = `<script\n  defer\n  data-website-id="${site.id}"\n  src="${origin}/js/script.js"\n></script>`;
+  const cookieAttr = site.cookie_visitors ? '\n  data-cookie="true"' : '';
+  const snippet = `<script\n  defer\n  data-website-id="${site.id}"${cookieAttr}\n  src="${origin}/js/script.js"\n></script>`;
   const webhookUrl = `${origin}/api/webhooks/dodo/${site.id}`;
 
   return (
@@ -92,7 +93,7 @@ export function Settings({ siteId }: { siteId: string }) {
 import Script from 'next/script';
 
 <head>
-  <Script defer data-website-id="${site.id}" src="${origin}/js/script.js" strategy="afterInteractive" />
+  <Script defer data-website-id="${site.id}"${site.cookie_visitors ? ' data-cookie="true"' : ''} src="${origin}/js/script.js" strategy="afterInteractive" />
 </head>`}</Code>
           </div>
         </details>
@@ -111,7 +112,7 @@ async rewrites() {
   ];
 }
 
-<script defer data-website-id="${site.id}" data-api="/stats/event" src="/stats/script.js"></script>`}</Code>
+<script defer data-website-id="${site.id}"${site.cookie_visitors ? ' data-cookie="true"' : ''} data-api="/stats/event" src="/stats/script.js"></script>`}</Code>
           </div>
         </details>
         <p className="mt-4 text-sm text-stone-500">
@@ -129,10 +130,22 @@ async rewrites() {
 <script>
   // From your own code
   window.minilytics('goal', 'signup', { plan: 'pro' });
+</script>
 
-  // After login: attach a name/email to the visitor
-  window.minilytics('identify', { user_id: '123', email: 'jane@acme.com', name: 'Jane' });
-</script>`}</Code>
+// Server-side, with the site API key. The first value sticks.
+await fetch('${origin}/api/v1/identify', {
+  method: 'POST',
+  headers: {
+    authorization: 'Bearer ' + process.env.MINILYTICS_API_KEY,
+    'content-type': 'application/json',
+  },
+  body: JSON.stringify({
+    visitor_id: visitorId,
+    email: 'jane@acme.com',
+    name: 'Jane',
+    user_id: 'user_123',
+  }),
+});`}</Code>
         <p className="mt-3 text-sm text-stone-500">Outbound link clicks are tracked automatically (Exit link tab).</p>
       </Section>
 
@@ -241,6 +254,39 @@ curl -X POST ${origin}/api/v1/goals \\
       </Section>
 
       <LinkBuilder domain={site.domain} />
+
+      <Section title="Public stats" desc="A logged-out page and a live badge. Off until you turn it on.">
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={site.public_stats} onChange={(e) => save({ public_stats: e.target.checked }, 'Public stats updated')} />
+          Show public stats
+        </label>
+        {site.public_stats && (
+          <div className="mt-4 space-y-3">
+            <div>
+              <div className="label">Share page</div>
+              <Code>{`${origin}/share/${site.id}`}</Code>
+            </div>
+            <div>
+              <div className="label">Live badge</div>
+              <Code>{`${origin}/api/public/${site.id}/live`}</Code>
+            </div>
+          </div>
+        )}
+      </Section>
+
+      <Section
+        title="Visitor cookies"
+        desc="Off by default. Turn this on to store ml_vid and ml_sid and to tag Dodo checkout links."
+      >
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={site.cookie_visitors}
+            onChange={(e) => save({ cookie_visitors: e.target.checked }, 'Cookie setting updated')}
+          />
+          Cookie visitors
+        </label>
+      </Section>
 
       <Section title="General">
         <div className="grid gap-4 sm:grid-cols-2">
