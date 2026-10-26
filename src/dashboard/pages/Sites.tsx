@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { DEFAULT_SITE_TIMEZONE } from '../../shared/siteDefaults';
 import { navigate, useMe } from '../App';
 import { Favicon } from '../components/Icons';
 import { Logo } from '../components/Logo';
@@ -80,7 +81,7 @@ const CURRENCIES = ['USD', 'EUR', 'GBP', 'INR', 'CAD', 'AUD', 'SGD', 'JPY', 'BRL
 function AddSite({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [domain, setDomain] = useState('');
   const [name, setName] = useState('');
-  const [timezone, setTimezone] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
+  const [timezone, setTimezone] = useState(DEFAULT_SITE_TIMEZONE);
   const [currency, setCurrency] = useState('USD');
   const [error, setError] = useState('');
 

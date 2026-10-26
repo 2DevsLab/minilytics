@@ -23,6 +23,38 @@ export interface Env {
   PLAN_SPOTS?: string; // spots at this price, e.g. "5"
   PLAN_NEXT_PRICE?: string; // shown as "then $49" next to the spots counter
   SUPPORT_EMAIL?: string;
+  /** Salt for cookieless visitor ids. Falls back to SESSION_SECRET. */
+  VISITOR_SALT?: string;
+  /** Team name for self-hosted Cloudflare Access. Ignored in hosted mode. */
+  CF_ACCESS_TEAM_DOMAIN?: string;
+  /** Access application audience (AUD). Both Access vars must be set. */
+  CF_ACCESS_AUD?: string;
+  /** Optional pair. Used only when INGEST_SITE is also bound. */
+  INGEST_IP?: IngestLimiter;
+  INGEST_SITE?: IngestLimiter;
+}
+
+export interface IngestLimiter {
+  limit(options: { key: string }): Promise<{ success: boolean }>;
+}
+
+/** D1 row. Flag columns are 0/1. Handlers hold `Site` after `parseSite`. */
+export interface SiteRow {
+  id: string;
+  name: string;
+  domain: string;
+  timezone: string;
+  currency: string;
+  api_key: string;
+  dodo_webhook_secret: string | null;
+  created_at: number;
+  owner_id?: string | null;
+  dodo_product_ids?: string | null;
+  owner_email?: string | null;
+  owner_plan_status?: string | null;
+  owner_plan_until?: number | null;
+  public_stats?: number | boolean | null;
+  cookie_visitors?: number | boolean | null;
 }
 
 export interface Site {
@@ -36,6 +68,11 @@ export interface Site {
   created_at: number;
   owner_id?: string | null;
   dodo_product_ids?: string | null;
+  owner_email?: string | null;
+  owner_plan_status?: string | null;
+  owner_plan_until?: number | null;
+  public_stats: boolean;
+  cookie_visitors: boolean;
 }
 
 /** A site plus its owner's plan, used to stop recording when a hosted plan lapses. */
@@ -45,17 +82,47 @@ export type AppEnv = { Bindings: Env; Variables: { site: Site; user: import('./a
 
 const siteCache = new Map<string, { site: SiteWithOwner | null; at: number }>();
 
+/** 1 and true are on. Every other value, including a missing column, is off. */
+export function flagOn(value: number | boolean | null | undefined): boolean {
+  return value === 1 || value === true;
+}
+
+export function flagBit(on: boolean): 0 | 1 {
+  return on ? 1 : 0;
+}
+
+export function parseSite(row: SiteRow): SiteWithOwner {
+  return {
+    id: row.id,
+    name: row.name,
+    domain: row.domain,
+    timezone: row.timezone,
+    currency: row.currency,
+    api_key: row.api_key,
+    dodo_webhook_secret: row.dodo_webhook_secret,
+    created_at: row.created_at,
+    owner_id: row.owner_id,
+    dodo_product_ids: row.dodo_product_ids,
+    owner_email: row.owner_email,
+    owner_plan_status: row.owner_plan_status,
+    owner_plan_until: row.owner_plan_until,
+    public_stats: flagOn(row.public_stats),
+    cookie_visitors: flagOn(row.cookie_visitors),
+  };
+}
+
 /** Sites change rarely; cache them per isolate so ingestion costs one fewer read per event. */
 export async function getSite(db: D1Database, id: string): Promise<SiteWithOwner | null> {
   const hit = siteCache.get(id);
   if (hit && Date.now() - hit.at < 60_000) return hit.site;
-  const site = await db
+  const row = await db
     .prepare(
       `SELECT s.*, u.email AS owner_email, u.plan_status AS owner_plan_status, u.plan_until AS owner_plan_until
        FROM sites s LEFT JOIN users u ON u.id = s.owner_id WHERE s.id = ?`,
     )
     .bind(id)
-    .first<SiteWithOwner>();
+    .first<SiteRow>();
+  const site = row ? parseSite(row) : null;
   siteCache.set(id, { site, at: Date.now() });
   return site;
 }

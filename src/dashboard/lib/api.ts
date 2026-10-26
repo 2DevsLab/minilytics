@@ -32,6 +32,8 @@ export interface Site {
   dodo_webhook_secret: string | null;
   dodo_product_ids?: string | null;
   created_at: number;
+  public_stats: boolean;
+  cookie_visitors: boolean;
   visitors24h?: number;
   online?: number;
 }

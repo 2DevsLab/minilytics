@@ -1,10 +1,11 @@
 import { Hono, type Context, type Next } from 'hono';
 import { cors } from 'hono/cors';
 import { handleEvent } from './collect';
-import { forgetSite, type AppEnv, type Site } from './env';
+import { flagBit, forgetSite, parseSite, type AppEnv, type Site, type SiteRow } from './env';
 import { clearSession, currentUser, googleCallback, googleStart, isHosted, requireUser, setSession, siteAccessSql } from './auth';
 import { billingWebhook, checkout, planInfo } from './billing';
 import { passwordsMatch, randomId } from './lib/crypto';
+import { createSiteTimezone } from '../shared/siteDefaults';
 import { handleDodoWebhook, handleGoalApi, handlePaymentApi, rematchPayments } from './payments';
 import { breakdown, customers, funnel, makeCtx, overview, realtime, visitorProfile, visitors, type FunnelStep } from './stats';
 
@@ -76,11 +77,11 @@ app.use('/api/sites/*', requireUser);
 
 const loadSite = async (c: Context<AppEnv>, next: Next) => {
   const access = siteAccessSql(c.env, c.get('user'));
-  const site = await c.env.DB.prepare(`SELECT s.* FROM sites s WHERE s.id = ? AND ${access.sql}`)
+  const row = await c.env.DB.prepare(`SELECT s.* FROM sites s WHERE s.id = ? AND ${access.sql}`)
     .bind(c.req.param('id'), ...access.params)
-    .first<Site>();
-  if (!site) return c.json({ error: 'site not found' }, 404);
-  c.set('site', site);
+    .first<SiteRow>();
+  if (!row) return c.json({ error: 'site not found' }, 404);
+  c.set('site', parseSite(row));
   await next();
 };
 app.use('/api/sites/:id', loadSite);
@@ -119,11 +120,14 @@ app.get('/api/sites', async (c) => {
   ]);
   const by = new Map((stats.results as any[]).map((r) => [r.site_id, r]));
   return c.json(
-    (sites.results as unknown as Site[]).map((s) => ({
-      ...publicSite(s),
-      visitors24h: by.get(s.id)?.visitors ?? 0,
-      online: by.get(s.id)?.online ?? 0,
-    })),
+    (sites.results as SiteRow[]).map((row) => {
+      const s = parseSite(row);
+      return {
+        ...publicSite(s),
+        visitors24h: by.get(s.id)?.visitors ?? 0,
+        online: by.get(s.id)?.online ?? 0,
+      };
+    }),
   );
 });
 
@@ -133,7 +137,7 @@ app.post('/api/sites', async (c) => {
   const b = await c.req.json<Partial<Site>>().catch(() => ({}) as Partial<Site>);
   const domain = cleanDomain(b.domain ?? '');
   if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(domain)) return c.json({ error: 'Enter a domain like example.com' }, 400);
-  const tz = b.timezone && validTimezone(b.timezone) ? b.timezone : 'UTC';
+  const tz = createSiteTimezone(b.timezone, validTimezone);
   const site: Site = {
     id: randomId(8),
     name: (b.name || domain).slice(0, 100),
@@ -143,6 +147,8 @@ app.post('/api/sites', async (c) => {
     api_key: 'ml_' + randomId(16),
     dodo_webhook_secret: null,
     created_at: Date.now(),
+    public_stats: false,
+    cookie_visitors: false,
   };
   await c.env.DB.prepare(
     'INSERT INTO sites (id, name, domain, timezone, currency, api_key, dodo_webhook_secret, created_at, owner_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -176,10 +182,28 @@ app.patch('/api/sites/:id', async (c) => {
     const ids = b.dodo_product_ids.split(/[\s,]+/).filter((x) => /^pdt_[\w-]+$/.test(x));
     next.dodo_product_ids = ids.join(',') || null;
   }
+  if (b.public_stats !== undefined) {
+    if (typeof b.public_stats !== 'boolean') return c.json({ error: 'public_stats must be a boolean' }, 400);
+    next.public_stats = b.public_stats;
+  }
+  if (b.cookie_visitors !== undefined) {
+    if (typeof b.cookie_visitors !== 'boolean') return c.json({ error: 'cookie_visitors must be a boolean' }, 400);
+    next.cookie_visitors = b.cookie_visitors;
+  }
   await c.env.DB.prepare(
-    'UPDATE sites SET name = ?, domain = ?, timezone = ?, currency = ?, dodo_webhook_secret = ?, dodo_product_ids = ? WHERE id = ?',
+    'UPDATE sites SET name = ?, domain = ?, timezone = ?, currency = ?, dodo_webhook_secret = ?, dodo_product_ids = ?, public_stats = ?, cookie_visitors = ? WHERE id = ?',
   )
-    .bind(next.name, next.domain, next.timezone, next.currency, next.dodo_webhook_secret, next.dodo_product_ids ?? null, site.id)
+    .bind(
+      next.name,
+      next.domain,
+      next.timezone,
+      next.currency,
+      next.dodo_webhook_secret,
+      next.dodo_product_ids ?? null,
+      flagBit(next.public_stats),
+      flagBit(next.cookie_visitors),
+      site.id,
+    )
     .run();
   forgetSite(site.id);
   return c.json(publicSite(next));
