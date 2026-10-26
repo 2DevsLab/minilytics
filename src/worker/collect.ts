@@ -3,7 +3,7 @@ import { classify } from '../shared/sources';
 import { siteOwnerActive } from './auth';
 import { getSite, type AppEnv, type Site } from './env';
 import { isBot, parseUA } from './lib/ua';
-import { creditedSessionSql } from './payments';
+import { creditedSessionSql, fillVisitorStmts } from './payments';
 import { belongsTo, gateEvent, type RawEvent, type TrackedEvent } from './policy';
 
 const TYPES = new Set(['pageview', 'goal', 'outbound', 'ping', 'identify']);
@@ -139,13 +139,7 @@ function claimPayment(db: D1Database, siteId: string, vid: string, url: URL, now
          WHERE site_id = ? AND (id = ? OR subscription_id = ?) AND visitor_id IS NULL`,
       )
       .bind(vid, siteId, vid, now + 60_000, siteId, paymentId, paymentId),
-    db
-      .prepare(
-        `UPDATE visitors SET email = COALESCE(email, (SELECT email FROM payments WHERE site_id = ? AND (id = ? OR subscription_id = ?) LIMIT 1)),
-           name = COALESCE(name, (SELECT name FROM payments WHERE site_id = ? AND (id = ? OR subscription_id = ?) LIMIT 1))
-         WHERE site_id = ? AND id = ?`,
-      )
-      .bind(siteId, paymentId, paymentId, siteId, paymentId, paymentId, siteId, vid),
+    ...fillVisitorStmts(db, siteId, vid, now, { kind: 'payment', paymentId }),
   ];
 }
 

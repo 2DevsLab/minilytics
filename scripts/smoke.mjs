@@ -56,6 +56,14 @@ await event(site.id, { t: 'outbound', u: 'https://app.smoke-test.com/pricing', n
 await event(site.id, { t: 'ping', u: 'https://app.smoke-test.com/pricing', d: 42000, vid, sid });
 r = await event(site.id, { t: 'identify', u: 'https://app.smoke-test.com/pricing', p: { email: 'Jane@Acme.com', name: 'Jane Doe' }, vid, sid });
 assert(r.status === 400, 'browser identify is rejected');
+const identify = (body) =>
+  fetch(BASE + '/api/v1/identify', {
+    method: 'POST',
+    headers: { authorization: `Bearer ${site.api_key}`, 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+assert((await identify({ visitor_id: vid, email: 'Jane@Acme.com', name: 'Jane Doe', user_id: 'user_123' })).status === 200, 'api identify fills');
+assert((await identify({ visitor_id: vid, email: 'other@acme.com', name: 'Other', user_id: 'user_999' })).status === 200, 'api identify accepts a later fill');
 
 // A second, bouncing visitor from Google
 await event(site.id, { t: 'pageview', u: 'https://smoke-test.com/blog/seo-article', r: 'https://www.google.com/', vid: crypto.randomUUID(), sid: crypto.randomUUID() });
@@ -120,7 +128,7 @@ assert(byPage.current.visitors === 1, 'filter by visited page');
 const cust = (await call(`/api/sites/${site.id}/customers?period=today`)).body;
 assert(cust.length === 2 && cust.some((c) => c.renewal === 1), 'journey lists payment + renewal');
 const prof = (await call(`/api/sites/${site.id}/visitors/${vid}`)).body;
-assert(prof.visitor.email === 'jane@acme.com' && prof.events.length === 4 && prof.payments.length === 3, 'visitor profile');
+assert(prof.visitor.email === 'jane@acme.com' && prof.visitor.user_id === 'user_123' && prof.visitor.name === 'Jane Doe' && prof.events.length === 4 && prof.payments.length === 3, 'visitor profile');
 
 const f = (await call(`/api/sites/${site.id}/funnels`, { method: 'POST', body: JSON.stringify({ name: 'Buy', steps: [{ type: 'page', value: '/' }, { type: 'page', value: '/pric*' }, { type: 'goal', value: 'checkout_click' }] }) })).body;
 const fs = (await call(`/api/sites/${site.id}/funnels/${f.id}/stats?period=today`)).body;
